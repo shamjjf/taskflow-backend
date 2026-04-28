@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum UserRole {
+  super_admin
+  team_leader
+  employee
+}
+
+enum UserStatus {
+  active
+  inactive
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+enum TaskStatus {
+  assigned
+  in_progress
+  completed
+  overdue
+}
+
+enum ReportType {
+  daily
+  weekly
+  task
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ConversationType {
+  direct
+  group
+}
+
+enum NotificationType {
+  task_assigned
+  task_started
+  task_completed
+  task_overdue
+  deadline_near
+  report_submitted
+  report_approved
+  report_rejected
+  message_new
+  comment_new
+  system
+}
+
+enum ReferenceType {
+  task
+  report
+  message
+  system
+}
+
+// ============ MODELS ============
+
+model Department {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique @db.VarChar(100)
+  description   String?  @db.Text
+  teamLeaderId  Int?     @map("team_leader_id")
+  teamLeader    User?    @relation("DepartmentLeader", fields: [teamLeaderId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  users         User[]         @relation("DepartmentMembers")
+  tasks         Task[]
+  conversations Conversation[]
+
+  @@map("departments")
+}
+
+model User {
+  id             Int         @id @default(autoincrement())
+  name           String      @db.VarChar(150)
+  email          String      @unique @db.VarChar(150)
+  passwordHash   String      @map("password_hash") @db.VarChar(255)
+  role           UserRole
+  departmentId   Int?        @map("department_id")
+  department     Department? @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  designation    String?     @db.VarChar(100)
+  profileImage   String?     @map("profile_image") @db.VarChar(255)
+  phone          String?     @db.VarChar(20)
+  status         UserStatus  @default(active)
+  lastLoginAt    DateTime?   @map("last_login_at")
+  refreshToken   String?     @map("refresh_token") @db.VarChar(500)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  ledDepartments          Department[]              @relation("DepartmentLeader")
+  createdTasks            Task[]                    @relation("TaskCreator")
+  taskAssignees           TaskAssignee[]
+  uploadedAttachments     TaskAttachment[]
+  taskComments            TaskComment[]
+  reports                 Report[]                  @relation("ReportAuthor")
+  reviewedReports         Report[]                  @relation("ReportReviewer")
+  conversationsCreated    Conversation[]            @relation("ConversationCreator")
+  conversationParticipant ConversationParticipant[]
+  messages                Message[]
+  notifications           Notification[]
+  activityLogs            ActivityLog[]
+
+  @@index([role])
+  @@index([departmentId])
+  @@map("users")
+}
+
+model Task {
+  id            Int           @id @default(autoincrement())
+  title         String        @db.VarChar(255)
+  description   String?       @db.Text
+  createdById   Int           @map("created_by")
+  createdBy     User          @relation("TaskCreator", fields: [createdById], references: [id])
+  departmentId  Int           @map("department_id")
+  department    Department    @relation(fields: [departmentId], references: [id])
+  priority      TaskPriority  @default(medium)
+  status        TaskStatus    @default(assigned)
+  deadline      DateTime
+  startedAt     DateTime?     @map("started_at")
+  completedAt   DateTime?     @map("completed_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  assignees     TaskAssignee[]
+  attachments   TaskAttachment[]
+  comments      TaskComment[]
+  reports       Report[]
+
+  @@index([status])
+  @@index([deadline])
+  @@index([departmentId, status])
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  id                Int        @id @default(autoincrement())
+  taskId            Int        @map("task_id")
+  task              Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId            Int        @map("user_id")
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  individualStatus  TaskStatus @default(assigned) @map("individual_status")
+  assignedAt        DateTime   @default(now()) @map("assigned_at")
+
+  @@unique([taskId, userId])
+  @@map("task_assignees")
+}
+
+model TaskAttachment {
+  id           Int      @id @default(autoincrement())
+  taskId       Int      @map("task_id")
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById Int      @map("uploaded_by")
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  fileUrl      String   @map("file_url") @db.VarChar(500)
+  fileName     String?  @map("file_name") @db.VarChar(255)
+  fileType     String?  @map("file_type") @db.VarChar(50)
+  fileSize     Int?     @map("file_size")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("task_attachments")
+}
+
+model TaskComment {
+  id            Int      @id @default(autoincrement())
+  taskId        Int      @map("task_id")
+  task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId        Int      @map("user_id")
+  user          User     @relation(fields: [userId], references: [id])
+  message       String   @db.Text
+  attachmentUrl String?  @map("attachment_url") @db.VarChar(500)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([taskId])
+  @@map("task_comments")
+}
+
+model Report {
+  id                    Int            @id @default(autoincrement())
+  userId                Int            @map("user_id")
+  user                  User           @relation("ReportAuthor", fields: [userId], references: [id])
+  taskId                Int?           @map("task_id")
+  task                  Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  reportType            ReportType     @map("report_type")
+  description           String         @db.Text
+  attachmentUrl         String?        @map("attachment_url") @db.VarChar(500)
+  reportDate            DateTime       @map("report_date") @db.Date
+  approvalStatus        ApprovalStatus @default(pending) @map("approval_status")
+  reviewedById          Int?           @map("reviewed_by")
+  reviewedBy            User?          @relation("ReportReviewer", fields: [reviewedById], references: [id])
+  reviewedAt            DateTime?      @map("reviewed_at")
+  reviewComment         String?        @map("review_comment") @db.Text
+  visibleToSuperAdmin   Boolean        @default(false) @map("visible_to_super_admin")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  @@index([approvalStatus])
+  @@index([userId, reportDate])
+  @@map("reports")
+}
+
+model Conversation {
+  id           Int              @id @default(autoincrement())
+  type         ConversationType
+  name         String?          @db.VarChar(150)
+  departmentId Int?             @map("department_id")
+  department   Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdById  Int              @map("created_by")
+  createdBy    User             @relation("ConversationCreator", fields: [createdById], references: [id])
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         Int          @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+  lastReadAt     DateTime?    @map("last_read_at")
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       Int          @map("sender_id")
+  sender         User         @relation(fields: [senderId], references: [id])
+  message        String       @db.Text
+  attachmentUrl  String?      @map("attachment_url") @db.VarChar(500)
+  isDeleted      Boolean      @default(false) @map("is_deleted")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model Notification {
+  id            Int              @id @default(autoincrement())
+  userId        Int              @map("user_id")
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          NotificationType
+  title         String           @db.VarChar(255)
+  message       String           @db.Text
+  referenceType ReferenceType?   @map("reference_type")
+  referenceId   Int?             @map("reference_id")
+  isRead        Boolean          @default(false) @map("is_read")
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model ActivityLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   @db.VarChar(100)
+  entityType String?  @map("entity_type") @db.VarChar(50)
+  entityId   Int?     @map("entity_id")
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("activity_logs")
+}
