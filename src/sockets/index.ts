@@ -122,4 +122,26 @@ export const socketEvents = {
   newNotification(userId: number, notification: unknown) {
     getIO().to(`user:${userId}`).emit('notification:new', notification);
   },
+
+  // ============ CALL EVENTS (Agora signaling) ============
+
+  /** Ring receivers - they should show incoming call popup with ringtone */
+  callIncoming(receiverIds: number[], payload: unknown) {
+    receiverIds.forEach((id) => getIO().to(`user:${id}`).emit('call:incoming', payload));
+  },
+
+  /** Notify caller + other ringing devices that the call was accepted */
+  callAccepted(participantIds: number[], payload: unknown) {
+    participantIds.forEach((id) => getIO().to(`user:${id}`).emit('call:accepted', payload));
+  },
+
+  /** Notify caller (and stop ringing on other devices of receiver) that call was rejected */
+  callRejected(participantIds: number[], payload: unknown) {
+    participantIds.forEach((id) => getIO().to(`user:${id}`).emit('call:rejected', payload));
+  },
+
+  /** Notify all participants that the call has ended */
+  callEnded(participantIds: number[], payload: unknown) {
+    participantIds.forEach((id) => getIO().to(`user:${id}`).emit('call:ended', payload));
+  },
 };

@@ -38,19 +38,15 @@ export const tasksService = {
       AND: Array<Record<string, unknown>>;
     } = { AND: [] };
 
-    // Role-based scoping
     if (requester.role === 'employee') {
-      // Employee: only tasks assigned to them
       where.AND.push({
         assignees: { some: { userId: requester.userId } },
       });
     } else if (requester.role === 'team_leader') {
-      // TL: only their department's tasks
       if (requester.departmentId) {
         where.AND.push({ departmentId: requester.departmentId });
       }
     }
-    // Super Admin: no scope restriction
 
     if (filters.departmentId) where.AND.push({ departmentId: filters.departmentId });
     if (filters.status) where.AND.push({ status: filters.status });
@@ -87,7 +83,7 @@ export const tasksService = {
   },
 
   async create(input: CreateTaskInput, createdById: number) {
-    return prisma.task.create({
+    const task = await prisma.task.create({
       data: {
         title: input.title,
         description: input.description,
@@ -101,6 +97,24 @@ export const tasksService = {
       },
       include: taskInclude,
     });
+
+    // Notify each assignee about the new task
+    await Promise.all(
+      input.assigneeIds.map((userId) =>
+        prisma.notification.create({
+          data: {
+            userId,
+            type: 'task_assigned',
+            title: 'New task assigned',
+            message: `You have been assigned "${task.title}". Deadline: ${task.deadline.toLocaleString()}`,
+            referenceType: 'task',
+            referenceId: task.id,
+          },
+        })
+      )
+    );
+
+    return task;
   },
 
   async update(
@@ -123,14 +137,21 @@ export const tasksService = {
   async startTask(id: number, userId: number) {
     const task = await prisma.task.findUnique({
       where: { id },
-      include: { assignees: true },
+      include: {
+        assignees: true,
+        department: { include: { teamLeader: true } },
+      },
     });
     if (!task) throw new Error('Task not found');
 
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');
 
-    return prisma.task.update({
+    if (task.status === 'completed') {
+      throw new Error('Task is already completed');
+    }
+
+    const updated = await prisma.task.update({
       where: { id },
       data: {
         status: 'in_progress',
@@ -138,19 +159,43 @@ export const tasksService = {
       },
       include: taskInclude,
     });
+
+    // Notify Team Leader that the task has started
+    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
+      const starter = await prisma.user.findUnique({ where: { id: userId } });
+      await prisma.notification.create({
+        data: {
+          userId: task.department.teamLeader.id,
+          type: 'task_started',
+          title: 'Task started',
+          message: `${starter?.name || 'A team member'} started working on "${task.title}"`,
+          referenceType: 'task',
+          referenceId: task.id,
+        },
+      });
+    }
+
+    return updated;
   },
 
   async completeTask(id: number, userId: number) {
     const task = await prisma.task.findUnique({
       where: { id },
-      include: { assignees: true },
+      include: {
+        assignees: true,
+        department: { include: { teamLeader: true } },
+      },
     });
     if (!task) throw new Error('Task not found');
 
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');
 
-    return prisma.task.update({
+    if (task.status === 'completed') {
+      throw new Error('Task is already completed');
+    }
+
+    const updated = await prisma.task.update({
       where: { id },
       data: {
         status: 'completed',
@@ -158,6 +203,23 @@ export const tasksService = {
       },
       include: taskInclude,
     });
+
+    // Notify Team Leader that the task is complete
+    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
+      const finisher = await prisma.user.findUnique({ where: { id: userId } });
+      await prisma.notification.create({
+        data: {
+          userId: task.department.teamLeader.id,
+          type: 'task_completed',
+          title: 'Task completed',
+          message: `${finisher?.name || 'A team member'} completed "${task.title}"`,
+          referenceType: 'task',
+          referenceId: task.id,
+        },
+      });
+    }
+
+    return updated;
   },
 
   async delete(id: number) {
