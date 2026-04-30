@@ -16,7 +16,7 @@ import chatRoutes from '@/modules/chat/chat.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
 import activityRoutes from '@/modules/activity/activity.routes';
 import analyticsRoutes from '@/modules/analytics/analytics.routes';
-// import uploadsRoutes from '@/modules/uploads/uploads.routes';
+import uploadsRoutes from '@/modules/uploads/uploads.routes'
 
 import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 
@@ -72,7 +72,7 @@ export function createApp(): Application {
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/activity-logs', activityRoutes);
   app.use('/api/analytics', analyticsRoutes);
-  // app.use('/api/uploads', uploadsRoutes);
+  app.use('/api/uploads', uploadsRoutes);
 
   // 404 + error handlers (must be last)
   app.use(notFoundHandler);
