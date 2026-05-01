@@ -16,13 +16,15 @@ import chatRoutes from '@/modules/chat/chat.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
 import activityRoutes from '@/modules/activity/activity.routes';
 import analyticsRoutes from '@/modules/analytics/analytics.routes';
-import uploadsRoutes from '@/modules/uploads/uploads.routes';
+import uploadsRoutes from '@/modules/upload/uploads.routes';
 import agoraRoutes from '@/modules/agora/agora.routes';
 
 import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 
 export function createApp(): Application {
   const app = express();
+
+
 
   // Security + parsing
   app.use(
