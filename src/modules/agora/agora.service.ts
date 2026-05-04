@@ -19,7 +19,12 @@ export const agoraService = {
     }
 
     const role = RtcRole.PUBLISHER; // Can publish + subscribe (normal call participant)
-    const expireSeconds = TOKEN_EXPIRY_SECONDS;
+
+    // IMPORTANT: Agora expects ABSOLUTE timestamps (seconds since epoch),
+    // NOT relative seconds. Passing 3600 here makes the token expire in 1970!
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpireTs = currentTimestamp + TOKEN_EXPIRY_SECONDS;
+    const tokenExpireTs = privilegeExpireTs;
 
     const token = RtcTokenBuilder.buildTokenWithUid(
       env.AGORA_APP_ID,
@@ -27,8 +32,8 @@ export const agoraService = {
       channelName,
       uid,
       role,
-      expireSeconds,
-      expireSeconds
+      tokenExpireTs,
+      privilegeExpireTs
     );
 
     return {
@@ -36,7 +41,7 @@ export const agoraService = {
       appId: env.AGORA_APP_ID,
       channelName,
       uid,
-      expiresIn: expireSeconds,
+      expiresIn: TOKEN_EXPIRY_SECONDS,
     };
   },
 };
