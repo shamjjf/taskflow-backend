@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { chatService } from './chat.service';
-import { ok, created, unauthorized, badRequest, forbidden } from '@/utils/response';
-import { asyncHandler } from '@/utils/asyncHandler';
+import { ok, created, unauthorized, badRequest } from '@/utils/response';
+import { asyncHandler } from '@/middleware/errorHandler';
+import { socketEvents } from '@/sockets';
 
-const createConvSchema = z.object({
+const createConversationSchema = z.object({
   type: z.enum(['direct', 'group']),
   name: z.string().optional(),
   participantIds: z.array(z.number()).min(1),
@@ -17,34 +18,20 @@ const messageSchema = z.object({
 });
 
 export const chatController = {
-  listConversations: asyncHandler(async (req: Request, res: Response) => {
+  list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const convs = await chatService.listConversations(req.user.userId);
-    return ok(res, convs);
+    const conversations = await chatService.listConversations(req.user.userId);
+    return ok(res, conversations);
   }),
 
-  createConversation: asyncHandler(async (req: Request, res: Response) => {
+  create: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const data = createConvSchema.parse(req.body);
-
-    // Verify TL/Employee can chat with each participant
-    if (req.user.role !== 'super_admin') {
-      for (const pid of data.participantIds) {
-        const allowed = await chatService.canChatWith(
-          { userId: req.user.userId, role: req.user.role, departmentId: req.user.departmentId },
-          pid
-        );
-        if (!allowed) {
-          return forbidden(res, 'You can only chat with members of your own department');
-        }
-      }
-    }
-
-    const conv = await chatService.createConversation({
+    const data = createConversationSchema.parse(req.body);
+    const conversation = await chatService.createConversation({
       ...data,
       createdById: req.user.userId,
     });
-    return created(res, conv, 'Conversation created');
+    return created(res, conversation);
   }),
 
   getMessages: asyncHandler(async (req: Request, res: Response) => {
@@ -54,7 +41,7 @@ export const chatController = {
       const messages = await chatService.getMessages(conversationId, req.user.userId);
       return ok(res, messages);
     } catch (err) {
-      return forbidden(res, (err as Error).message);
+      return badRequest(res, (err as Error).message);
     }
   }),
 
@@ -63,7 +50,21 @@ export const chatController = {
     const conversationId = parseInt(req.params.id, 10);
     const { message, attachmentUrl } = messageSchema.parse(req.body);
     try {
-      const msg = await chatService.sendMessage(conversationId, req.user.userId, message, attachmentUrl);
+      const msg = await chatService.sendMessage(
+        conversationId,
+        req.user.userId,
+        message,
+        attachmentUrl
+      );
+
+      // Real-time broadcast to all users in this conversation room
+      try {
+        socketEvents.newMessage(conversationId, msg);
+      } catch (socketErr) {
+        // Don't fail the request if socket emit fails — message is saved
+        console.error('[Socket] Emit failed:', socketErr);
+      }
+
       return created(res, msg);
     } catch (err) {
       return badRequest(res, (err as Error).message);
