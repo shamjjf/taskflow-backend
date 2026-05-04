@@ -16,17 +16,20 @@ import chatRoutes from '@/modules/chat/chat.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
 import activityRoutes from '@/modules/activity/activity.routes';
 import analyticsRoutes from '@/modules/analytics/analytics.routes';
-import uploadsRoutes from '@/modules/uploads/uploads.routes'
+import uploadsRoutes from '@/modules/upload/uploads.routes'
+import agoraRoutes from '@/modules/agora/agora.routes';
 
 import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 
 export function createApp(): Application {
   const app = express();
 
+
+
   // Security + parsing
   app.use(
     helmet({
-      crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow images/files to load from frontend
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
     })
   );
   app.use(
@@ -45,12 +48,12 @@ export function createApp(): Application {
     app.use(morgan('combined'));
   }
 
-  // Serve uploaded files statically (BEFORE rate limiting and auth)
+  // Serve uploaded files statically
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Rate limiting (only on /api routes)
   const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 15 * 60 * 1000,
     max: 500,
     standardHeaders: true,
     legacyHeaders: false,
@@ -73,6 +76,7 @@ export function createApp(): Application {
   app.use('/api/activity-logs', activityRoutes);
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/uploads', uploadsRoutes);
+  app.use('/api/agora', agoraRoutes);
 
   // 404 + error handlers (must be last)
   app.use(notFoundHandler);

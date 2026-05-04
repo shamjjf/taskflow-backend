@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec \"ts-node -r tsconfig-paths/register\" src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "build": "tsc && tsc-alias",
+    "start": "npx prisma migrate deploy && node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
@@ -14,8 +14,12 @@
     "prisma:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
     "lint": "eslint src --ext .ts"
   },
+  "prisma": {
+    "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
+  },
   "dependencies": {
     "@prisma/client": "5.22.0",
+    "agora-token": "^2.0.5",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -25,7 +29,12 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "prisma": "5.22.0",
     "socket.io": "^4.7.5",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.10",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.5.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -36,10 +45,6 @@
     "@types/morgan": "^1.9.9",
     "@types/multer": "^1.4.13",
     "@types/node": "^20.14.10",
-    "nodemon": "^3.1.4",
-    "prisma": "5.22.0",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.5.3"
+    "nodemon": "^3.1.4"
   }
 }

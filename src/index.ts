@@ -3,6 +3,7 @@ import { createApp } from '@/app';
 import { env } from '@/config/env';
 import { initSocketServer } from '@/sockets';
 import { prisma } from '@/config/prisma';
+import { startOverdueChecker } from '@/utils/overdueChecker';
 
 async function main() {
   const app = createApp();
@@ -20,6 +21,10 @@ async function main() {
     process.exit(1);
   }
 
+  // Start overdue task checker (runs every 5 minutes)
+  const overdueInterval = startOverdueChecker(5);
+  console.log('✓ Overdue task checker started (runs every 5 min)');
+
   httpServer.listen(env.PORT, () => {
     console.log('');
     console.log('🚀 TaskFlow API');
@@ -33,6 +38,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\nShutting down gracefully...');
+    clearInterval(overdueInterval);
     httpServer.close(() => {
       prisma.$disconnect().then(() => process.exit(0));
     });
