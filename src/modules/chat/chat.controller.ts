@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { chatService } from './chat.service';
 import { ok, created, unauthorized, badRequest, forbidden } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
+import { socketEvents } from '@/sockets';
 
 const createConvSchema = z.object({
   type: z.enum(['direct', 'group']),
@@ -64,6 +65,17 @@ export const chatController = {
     const { message, attachmentUrl } = messageSchema.parse(req.body);
     try {
       const msg = await chatService.sendMessage(conversationId, req.user.userId, message, attachmentUrl);
+
+      // ============ REAL-TIME BROADCAST ============
+      // Emit to all users in the conversation room so other participants get the message instantly
+      try {
+        socketEvents.newMessage(conversationId, { ...msg, conversationId });
+      } catch (socketErr) {
+        // Don't fail the request if socket emit fails — message is already saved
+        console.error('[Socket] Failed to broadcast new message:', socketErr);
+      }
+      // =============================================
+
       return created(res, msg);
     } catch (err) {
       return badRequest(res, (err as Error).message);
