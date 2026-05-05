@@ -11,6 +11,7 @@ datasource db {
 
 enum UserRole {
   super_admin
+  admin
   team_leader
   employee
 }
@@ -29,8 +30,9 @@ enum TaskPriority {
 enum TaskStatus {
   assigned
   in_progress
+  in_review
   completed
-  overdue
+  overdue 
 }
 
 enum ReportType {
