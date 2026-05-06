@@ -30,6 +30,10 @@ const commentSchema = z.object({
   attachmentUrl: z.string().optional(),
 });
 
+const rejectSchema = z.object({
+  reason: z.string().min(1),
+});
+
 const attachmentSchema = z.object({
   fileUrl: z.string().url(),
   fileName: z.string().optional(),
@@ -112,6 +116,18 @@ export const tasksController = {
     try {
       const task = await tasksService.reviewTask(id, req.user.userId);
       return ok(res, task, 'Task submitted for review');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
+  }),
+
+  reject: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const id = parseInt(req.params.id, 10);
+    const { reason } = rejectSchema.parse(req.body);
+    try {
+      const task = await tasksService.rejectTask(id, req.user, reason);
+      return ok(res, task, 'Task sent back for changes');
     } catch (err) {
       return badRequest(res, (err as Error).message);
     }

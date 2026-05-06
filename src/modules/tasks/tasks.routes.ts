@@ -20,6 +20,9 @@ router.put('/:id/start', tasksController.start);
 router.put('/:id/review', tasksController.review);
 router.put('/:id/complete', tasksController.complete);
 
+// Team leaders review the in_review queue: accept (use /complete) or reject
+router.put('/:id/reject', requireTLOrAbove, tasksController.reject);
+
 router.post('/:id/comments', tasksController.addComment);
 router.post('/:id/attachments', tasksController.addAttachment);
 

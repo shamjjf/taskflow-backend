@@ -223,6 +223,65 @@ export const tasksService = {
     return updated;
   },
 
+  async rejectTask(
+    id: number,
+    requester: { userId: number; role: UserRole; departmentId: number | null },
+    reason: string
+  ) {
+    const task = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        assignees: true,
+        department: { include: { teamLeader: true } },
+      },
+    });
+    if (!task) throw new Error('Task not found');
+
+    const isTeamLeaderOfDept =
+      requester.role === 'team_leader' && requester.departmentId === task.departmentId;
+    if (!isTeamLeaderOfDept && requester.role !== 'super_admin') {
+      throw new Error('Only the team leader of this department can reject this task');
+    }
+
+    if (task.status !== 'in_review') {
+      throw new Error('Only tasks in review can be rejected');
+    }
+
+    const updated = await prisma.task.update({
+      where: { id },
+      data: {
+        status: 'in_progress',
+        completedAt: null,
+      },
+      include: taskInclude,
+    });
+
+    await prisma.taskComment.create({
+      data: {
+        taskId: id,
+        userId: requester.userId,
+        message: `Sent back for changes: ${reason}`,
+      },
+    });
+
+    await Promise.all(
+      task.assignees.map((a) =>
+        prisma.notification.create({
+          data: {
+            userId: a.userId,
+            type: 'task_review',
+            title: 'Task sent back',
+            message: `"${task.title}" was sent back: ${reason}`,
+            referenceType: 'task',
+            referenceId: task.id,
+          },
+        })
+      )
+    );
+
+    return updated;
+  },
+
   async reviewTask(id: number, userId: number) {
     const task = await prisma.task.findUnique({
       where: { id },
