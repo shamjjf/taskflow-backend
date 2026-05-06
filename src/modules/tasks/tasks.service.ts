@@ -178,7 +178,7 @@ export const tasksService = {
     return updated;
   },
 
-  async completeTask(id: number, userId: number) {
+  async completeTask(id: number, requester: { userId: number; role: UserRole; departmentId: number | null }) {
     const task = await prisma.task.findUnique({
       where: { id },
       include: {
@@ -188,8 +188,9 @@ export const tasksService = {
     });
     if (!task) throw new Error('Task not found');
 
-    const isAssigned = task.assignees.some((a) => a.userId === userId);
-    if (!isAssigned) throw new Error('You are not assigned to this task');
+    const isAssigned = task.assignees.some((a) => a.userId === requester.userId);
+    const isTeamLeader = requester.role === 'team_leader' && requester.departmentId === task.departmentId;
+    if (!isAssigned && !isTeamLeader) throw new Error('You are not assigned to this task or not the team leader of this department');
 
     if (task.status === 'completed') {
       throw new Error('Task is already completed');
@@ -205,8 +206,8 @@ export const tasksService = {
     });
 
     // Notify Team Leader that the task is complete
-    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
-      const finisher = await prisma.user.findUnique({ where: { id: userId } });
+    if (task.department.teamLeader && task.department.teamLeader.id !== requester.userId) {
+      const finisher = await prisma.user.findUnique({ where: { id: requester.userId } });
       await prisma.notification.create({
         data: {
           userId: task.department.teamLeader.id,
@@ -243,7 +244,7 @@ export const tasksService = {
     const updated = await prisma.task.update({
       where: { id },
       data: {
-        status: 'completed',
+        status: 'in_review',
         completedAt: new Date(),
       },
       include: taskInclude,

@@ -99,7 +99,7 @@ export const tasksController = {
     if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     try {
-      const task = await tasksService.completeTask(id, req.user.userId);
+      const task = await tasksService.completeTask(id, req.user);
       return ok(res, task, 'Task completed');
     } catch (err) {
       return badRequest(res, (err as Error).message);
