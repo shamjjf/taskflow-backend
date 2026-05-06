@@ -17,6 +17,7 @@ router.delete('/:id', requireTLOrAbove, tasksController.remove);
 
 // Employees can start/complete their own tasks
 router.put('/:id/start', tasksController.start);
+router.put('/:id/review', tasksController.review);
 router.put('/:id/complete', tasksController.complete);
 
 router.post('/:id/comments', tasksController.addComment);

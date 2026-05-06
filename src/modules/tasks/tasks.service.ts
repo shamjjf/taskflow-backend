@@ -222,6 +222,51 @@ export const tasksService = {
     return updated;
   },
 
+  async reviewTask(id: number, userId: number) {
+    const task = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        assignees: true,
+        department: { include: { teamLeader: true } },
+      },
+    });
+
+    if (!task) throw new Error('Task not found');
+
+    const isAssigned = task.assignees.some((a) => a.userId === userId);
+    if (!isAssigned) throw new Error('You are not assigned to this task');
+
+    if (task.status === 'completed') {
+      throw new Error('Task is already completed');
+    }
+
+    const updated = await prisma.task.update({
+      where: { id },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+      },
+      include: taskInclude,
+    });
+
+    // Notify Team Leader that the task is ready for review
+    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
+      const submitter = await prisma.user.findUnique({ where: { id: userId } });
+      await prisma.notification.create({
+        data: {
+          userId: task.department.teamLeader.id,
+          type: 'task_review',
+          title: 'Task submitted for review',
+          message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review`,
+          referenceType: 'task',
+          referenceId: task.id,
+        },
+      });
+    }
+
+    return updated;
+  },
+
   async delete(id: number) {
     return prisma.task.delete({ where: { id } });
   },

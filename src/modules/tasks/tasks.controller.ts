@@ -40,12 +40,14 @@ const attachmentSchema = z.object({
 export const tasksController = {
   list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
+    
     const filters = {
       departmentId: req.query.departmentId ? parseInt(req.query.departmentId as string, 10) : undefined,
       status: req.query.status as TaskStatus | undefined,
       priority: req.query.priority as TaskPriority | undefined,
       assigneeId: req.query.assigneeId ? parseInt(req.query.assigneeId as string, 10) : undefined,
     };
+
     const tasks = await tasksService.list(filters, {
       userId: req.user.userId,
       role: req.user.role,
@@ -99,6 +101,17 @@ export const tasksController = {
     try {
       const task = await tasksService.completeTask(id, req.user.userId);
       return ok(res, task, 'Task completed');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
+  }),
+
+  review: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const id = parseInt(req.params.id, 10);
+    try {
+      const task = await tasksService.reviewTask(id, req.user.userId);
+      return ok(res, task, 'Task submitted for review');
     } catch (err) {
       return badRequest(res, (err as Error).message);
     }
