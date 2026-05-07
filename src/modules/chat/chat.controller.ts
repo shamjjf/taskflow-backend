@@ -18,6 +18,27 @@ const messageSchema = z.object({
   attachmentUrl: z.string().optional(),
 });
 
+async function canManageGroup(
+  conversationId: number,
+  user: { userId: number; role: string; departmentId: number | null }
+) {
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { type: true, departmentId: true, createdById: true, isAutoDepartmentGroup: true },
+  });
+  if (!conv || conv.type !== 'group') return { ok: false, error: 'Not a group chat' };
+  if (user.role === 'super_admin' || user.role === 'admin') return { ok: true };
+  if (conv.createdById === user.userId) return { ok: true };
+  if (
+    user.role === 'team_leader' &&
+    conv.departmentId &&
+    conv.departmentId === user.departmentId
+  ) {
+    return { ok: true };
+  }
+  return { ok: false, error: 'You do not have permission to manage this group' };
+}
+
 export const chatController = {
   listConversations: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
@@ -29,9 +50,20 @@ export const chatController = {
     if (!req.user) return unauthorized(res);
     const data = createConvSchema.parse(req.body);
 
-    // Verify TL/Employee can chat with each participant
-    if (req.user.role !== 'super_admin') {
+    if (data.type === 'group' && !data.name?.trim()) {
+      return badRequest(res, 'Group name is required');
+    }
+
+    // Authorization: super_admin/admin can create with anyone.
+    // team_leader can create groups with members of their own department.
+    // employee cannot create groups (only direct chats with same dept).
+    if (req.user.role === 'employee' && data.type === 'group') {
+      return forbidden(res, 'Only team leaders or admins can create group chats');
+    }
+
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin') {
       for (const pid of data.participantIds) {
+        if (pid === req.user.userId) continue;
         const allowed = await chatService.canChatWith(
           { userId: req.user.userId, role: req.user.role, departmentId: req.user.departmentId },
           pid
@@ -126,27 +158,16 @@ export const chatController = {
     const { userId } = z.object({ userId: z.number() }).parse(req.body);
 
     try {
-      // Only admins or team leaders can add members
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        select: { departmentId: true, isAutoDepartmentGroup: true },
+      const auth = await canManageGroup(conversationId, {
+        userId: req.user.userId,
+        role: req.user.role,
+        departmentId: req.user.departmentId,
       });
-
-      if (!conversation?.isAutoDepartmentGroup) {
-        return forbidden(res, 'This is not a department group chat');
+      if (!auth.ok) {
+        return forbidden(res, auth.error || 'Forbidden');
       }
 
-      // Verify requester is admin or team leader of the department
-      const isAuthorized =
-        req.user.role === 'super_admin' ||
-        (req.user.role === 'team_leader' && req.user.departmentId === conversation.departmentId) ||
-        req.user.role === 'admin';
-
-      if (!isAuthorized) {
-        return forbidden(res, 'You do not have permission to add members to this group');
-      }
-
-      const participant = await chatService.addMemberToDepartmentGroup(conversationId, userId);
+      const participant = await chatService.addMember(conversationId, userId);
       return created(res, participant, 'Member added to group');
     } catch (err) {
       return badRequest(res, (err as Error).message);
@@ -159,27 +180,16 @@ export const chatController = {
     const { userId } = z.object({ userId: z.number() }).parse(req.body);
 
     try {
-      // Only admins or team leaders can remove members
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        select: { departmentId: true, isAutoDepartmentGroup: true },
+      const auth = await canManageGroup(conversationId, {
+        userId: req.user.userId,
+        role: req.user.role,
+        departmentId: req.user.departmentId,
       });
-
-      if (!conversation?.isAutoDepartmentGroup) {
-        return forbidden(res, 'This is not a department group chat');
+      if (!auth.ok) {
+        return forbidden(res, auth.error || 'Forbidden');
       }
 
-      // Verify requester is admin or team leader of the department
-      const isAuthorized =
-        req.user.role === 'super_admin' ||
-        (req.user.role === 'team_leader' && req.user.departmentId === conversation.departmentId) ||
-        req.user.role === 'admin';
-
-      if (!isAuthorized) {
-        return forbidden(res, 'You do not have permission to remove members from this group');
-      }
-
-      const result = await chatService.removeMemberFromDepartmentGroup(conversationId, userId);
+      const result = await chatService.removeMember(conversationId, userId);
       return ok(res, result, 'Member removed from group');
     } catch (err) {
       return badRequest(res, (err as Error).message);

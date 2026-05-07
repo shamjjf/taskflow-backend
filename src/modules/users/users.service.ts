@@ -1,6 +1,7 @@
 import { prisma } from '@/config/prisma';
 import { UserRole } from '@prisma/client';
 import { hashPassword } from '@/utils/password';
+import { chatService } from '../chat/chat.service';
 
 export interface UsersFilters {
   departmentId?: number;
@@ -74,7 +75,7 @@ export const usersService = {
     designation?: string;
   }) {
     const passwordHash = await hashPassword(data.password);
-    return prisma.user.create({
+    const user = await prisma.user.create({
       data: {
         name: data.name,
         email: data.email,
@@ -91,6 +92,17 @@ export const usersService = {
         departmentId: true,
       },
     });
+
+    // Auto-enroll the new user into their department's group chat (if any).
+    if (user.departmentId) {
+      try {
+        await chatService.addUserToDepartmentGroupIfMember(user.id, user.departmentId);
+      } catch (err) {
+        console.error('Failed to add new user to department group chat:', err);
+      }
+    }
+
+    return user;
   },
 
   async update(
