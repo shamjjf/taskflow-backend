@@ -17,4 +17,8 @@ router.put('/:id', requireSuperAdmin, departmentsController.update);
 router.delete('/:id', requireSuperAdmin, departmentsController.remove);
 router.put('/:id/assign-leader', requireSuperAdmin, departmentsController.assignLeader);
 
+// Group chat endpoints
+router.post('/:id/group-chat/create', departmentsController.createGroupChatForDepartment);
+router.post('/group-chats/seed', requireSuperAdmin, departmentsController.seedGroupChats);
+
 export default router;

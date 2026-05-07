@@ -101,4 +101,123 @@ export const chatService = {
     if (!target) return false;
     return target.departmentId === requester.departmentId;
   },
+
+  // ============ DEPARTMENT GROUP CHAT METHODS ============
+
+  async createDepartmentGroupChat(departmentId: number, createdById: number) {
+    // Get department with team leader
+    const department = await prisma.department.findUnique({
+      where: { id: departmentId },
+      include: {
+        teamLeader: { select: { id: true } },
+      },
+    });
+
+    if (!department) throw new Error('Department not found');
+
+    // Collect initial participants: creator, team leader
+    const participantIds = new Set<number>();
+    participantIds.add(createdById); // Creator (admin)
+    if (department.teamLeaderId) {
+      participantIds.add(department.teamLeaderId);
+    }
+
+    // Create the group chat with isAutoDepartmentGroup flag
+    const conversation = await prisma.conversation.create({
+      data: {
+        type: 'group',
+        name: `${department.name} - Group Chat`,
+        departmentId,
+        createdById,
+        isAutoDepartmentGroup: true,
+        participants: {
+          create: Array.from(participantIds).map((userId) => ({ userId })),
+        },
+      },
+      include: {
+        participants: { include: { user: { select: { id: true, name: true } } } },
+      },
+    });
+
+    return conversation;
+  },
+
+  async getDepartmentGroupChat(departmentId: number) {
+    return prisma.conversation.findFirst({
+      where: {
+        departmentId,
+        isAutoDepartmentGroup: true,
+      },
+      include: {
+        participants: {
+          include: {
+            user: { select: { id: true, name: true, email: true, profileImage: true } },
+          },
+        },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+  },
+
+  async addMemberToDepartmentGroup(conversationId: number, userId: number) {
+    // Verify conversation is a department group chat
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { isAutoDepartmentGroup: true, departmentId: true },
+    });
+
+    if (!conversation?.isAutoDepartmentGroup) {
+      throw new Error('This is not a department group chat');
+    }
+
+    // Check if user is already a participant
+    const existingParticipant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId, userId } },
+    });
+
+    if (existingParticipant) {
+      throw new Error('User is already a member of this group');
+    }
+
+    // Add the user
+    return prisma.conversationParticipant.create({
+      data: { conversationId, userId },
+      include: {
+        user: { select: { id: true, name: true, email: true, profileImage: true } },
+      },
+    });
+  },
+
+  async removeMemberFromDepartmentGroup(conversationId: number, userId: number) {
+    // Verify conversation is a department group chat
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { isAutoDepartmentGroup: true },
+    });
+
+    if (!conversation?.isAutoDepartmentGroup) {
+      throw new Error('This is not a department group chat');
+    }
+
+    // Remove the participant
+    await prisma.conversationParticipant.delete({
+      where: { conversationId_userId: { conversationId, userId } },
+    });
+
+    return { success: true };
+  },
+
+  async getDepartmentGroupMembers(conversationId: number) {
+    return prisma.conversationParticipant.findMany({
+      where: { conversationId },
+      include: {
+        user: { select: { id: true, name: true, email: true, role: true, designation: true, profileImage: true } },
+      },
+      orderBy: { joinedAt: 'asc' },
+    });
+  },
 };
+

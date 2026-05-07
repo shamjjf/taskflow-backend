@@ -221,18 +221,20 @@ model Report {
 }
 
 model Conversation {
-  id           Int              @id @default(autoincrement())
-  type         ConversationType
-  name         String?          @db.VarChar(150)
-  departmentId Int?             @map("department_id")
-  department   Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  createdById  Int              @map("created_by")
-  createdBy    User             @relation("ConversationCreator", fields: [createdById], references: [id])
-  createdAt    DateTime         @default(now()) @map("created_at")
+  id                    Int              @id @default(autoincrement())
+  type                  ConversationType
+  name                  String?          @db.VarChar(150)
+  departmentId          Int?             @map("department_id")
+  department            Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  isAutoDepartmentGroup Boolean          @default(false) @map("is_auto_department_group")
+  createdById           Int              @map("created_by")
+  createdBy             User             @relation("ConversationCreator", fields: [createdById], references: [id])
+  createdAt             DateTime         @default(now()) @map("created_at")
 
   participants ConversationParticipant[]
   messages     Message[]
 
+  @@index([departmentId, isAutoDepartmentGroup])
   @@map("conversations")
 }
 

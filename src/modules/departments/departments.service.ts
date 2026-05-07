@@ -1,4 +1,5 @@
 import { prisma } from '@/config/prisma';
+import { chatService } from '../chat/chat.service';
 
 export const departmentsService = {
   async list() {
@@ -47,11 +48,49 @@ export const departmentsService = {
   },
 
   async create(data: { name: string; description?: string; teamLeaderId?: number }) {
-    return prisma.department.create({ data });
+    const department = await prisma.department.create({ data });
+
+    // Get super admin to create the group chat
+    const superAdmin = await prisma.user.findFirst({
+      where: { role: 'super_admin' },
+      select: { id: true },
+    });
+
+    if (superAdmin) {
+      try {
+        // Create department group chat
+        await chatService.createDepartmentGroupChat(department.id, superAdmin.id);
+      } catch (err) {
+        // Log the error but don't fail the department creation
+        console.error('Error creating department group chat:', err);
+      }
+    }
+
+    return department;
   },
 
   async update(id: number, data: { name?: string; description?: string; teamLeaderId?: number }) {
-    return prisma.department.update({ where: { id }, data });
+    const department = await prisma.department.update({ where: { id }, data });
+
+    // If team leader was updated and group chat exists, update members
+    if (data.teamLeaderId !== undefined) {
+      try {
+        const groupChat = await chatService.getDepartmentGroupChat(id);
+        if (groupChat) {
+          const oldMembers = groupChat.participants.map((p) => p.userId);
+          const newTeamLeaderId = data.teamLeaderId;
+
+          // Add new team leader if not already a member
+          if (newTeamLeaderId && !oldMembers.includes(newTeamLeaderId)) {
+            await chatService.addMemberToDepartmentGroup(groupChat.id, newTeamLeaderId);
+          }
+        }
+      } catch (err) {
+        console.error('Error updating department group chat:', err);
+      }
+    }
+
+    return department;
   },
 
   async delete(id: number) {
@@ -64,10 +103,26 @@ export const departmentsService = {
       where: { id: teamLeaderId },
       data: { role: 'team_leader', departmentId: id },
     });
-    return prisma.department.update({
+
+    const department = await prisma.department.update({
       where: { id },
       data: { teamLeaderId },
     });
+
+    // Update group chat membership
+    try {
+      const groupChat = await chatService.getDepartmentGroupChat(id);
+      if (groupChat) {
+        const oldMembers = groupChat.participants.map((p) => p.userId);
+        if (!oldMembers.includes(teamLeaderId)) {
+          await chatService.addMemberToDepartmentGroup(groupChat.id, teamLeaderId);
+        }
+      }
+    } catch (err) {
+      console.error('Error adding team leader to group chat:', err);
+    }
+
+    return department;
   },
 
   async getMembers(departmentId: number) {

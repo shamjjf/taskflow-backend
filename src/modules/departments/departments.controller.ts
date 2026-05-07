@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { departmentsService } from './departments.service';
-import { ok, created, notFound } from '@/utils/response';
+import { ok, created, notFound, forbidden } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
+import { departmentGroupChatSeeder } from '@/utils/departmentGroupChatSeeder';
 
 const createSchema = z.object({
   name: z.string().min(2).max(100),
@@ -59,5 +60,31 @@ export const departmentsController = {
     const id = parseInt(req.params.id, 10);
     const members = await departmentsService.getMembers(id);
     return ok(res, members);
+  }),
+
+  seedGroupChats: asyncHandler(async (req: Request, res: Response) => {
+    // Only super admins can seed group chats
+    if (!req.user || req.user.role !== 'super_admin') {
+      return forbidden(res, 'Only super admins can seed group chats');
+    }
+
+    const result = await departmentGroupChatSeeder.createGroupChatsForAllDepartments();
+    return ok(res, result, 'Group chat seeding completed');
+  }),
+
+  createGroupChatForDepartment: asyncHandler(async (req: Request, res: Response) => {
+    // Only super admins or team leads can create group chats
+    if (!req.user || (req.user.role !== 'super_admin' && req.user.role !== 'admin')) {
+      return forbidden(res, 'You do not have permission to create group chats');
+    }
+
+    const departmentId = parseInt(req.params.id, 10);
+    const result = await departmentGroupChatSeeder.createGroupChatForDepartment(departmentId);
+
+    if (!result.success) {
+      return notFound(res, result.message);
+    }
+
+    return created(res, result.data, result.message);
   }),
 };

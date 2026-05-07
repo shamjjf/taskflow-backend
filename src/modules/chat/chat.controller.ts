@@ -4,6 +4,7 @@ import { chatService } from './chat.service';
 import { ok, created, unauthorized, badRequest, forbidden } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { socketEvents } from '@/sockets';
+import { prisma } from '@/config/prisma';
 
 const createConvSchema = z.object({
   type: z.enum(['direct', 'group']),
@@ -87,5 +88,101 @@ export const chatController = {
     const conversationId = parseInt(req.params.id, 10);
     await chatService.markRead(conversationId, req.user.userId);
     return ok(res, null, 'Marked as read');
+  }),
+
+  // ============ DEPARTMENT GROUP CHAT ENDPOINTS ============
+
+  getDepartmentGroupChat: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const departmentId = parseInt(req.params.departmentId, 10);
+
+    try {
+      const groupChat = await chatService.getDepartmentGroupChat(departmentId);
+      if (!groupChat) {
+        return badRequest(res, 'Department group chat not found');
+      }
+
+      return ok(res, groupChat);
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
+  }),
+
+  getDepartmentGroupMembers: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const conversationId = parseInt(req.params.id, 10);
+
+    try {
+      const members = await chatService.getDepartmentGroupMembers(conversationId);
+      return ok(res, members);
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
+  }),
+
+  addMemberToDepartmentGroup: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const conversationId = parseInt(req.params.id, 10);
+    const { userId } = z.object({ userId: z.number() }).parse(req.body);
+
+    try {
+      // Only admins or team leaders can add members
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { departmentId: true, isAutoDepartmentGroup: true },
+      });
+
+      if (!conversation?.isAutoDepartmentGroup) {
+        return forbidden(res, 'This is not a department group chat');
+      }
+
+      // Verify requester is admin or team leader of the department
+      const isAuthorized =
+        req.user.role === 'super_admin' ||
+        (req.user.role === 'team_leader' && req.user.departmentId === conversation.departmentId) ||
+        req.user.role === 'admin';
+
+      if (!isAuthorized) {
+        return forbidden(res, 'You do not have permission to add members to this group');
+      }
+
+      const participant = await chatService.addMemberToDepartmentGroup(conversationId, userId);
+      return created(res, participant, 'Member added to group');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
+  }),
+
+  removeMemberFromDepartmentGroup: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const conversationId = parseInt(req.params.id, 10);
+    const { userId } = z.object({ userId: z.number() }).parse(req.body);
+
+    try {
+      // Only admins or team leaders can remove members
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { departmentId: true, isAutoDepartmentGroup: true },
+      });
+
+      if (!conversation?.isAutoDepartmentGroup) {
+        return forbidden(res, 'This is not a department group chat');
+      }
+
+      // Verify requester is admin or team leader of the department
+      const isAuthorized =
+        req.user.role === 'super_admin' ||
+        (req.user.role === 'team_leader' && req.user.departmentId === conversation.departmentId) ||
+        req.user.role === 'admin';
+
+      if (!isAuthorized) {
+        return forbidden(res, 'You do not have permission to remove members from this group');
+      }
+
+      const result = await chatService.removeMemberFromDepartmentGroup(conversationId, userId);
+      return ok(res, result, 'Member removed from group');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
   }),
 };
