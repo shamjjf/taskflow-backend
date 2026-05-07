@@ -1,5 +1,5 @@
 import { prisma } from '@/config/prisma';
-import { ConversationType, UserRole } from '@prisma/client';
+import { ConversationType } from '@prisma/client';
 
 async function ensureParticipant(conversationId: number, userId: number) {
   const existing = await prisma.conversationParticipant.findUnique({
@@ -129,22 +129,6 @@ export const chatService = {
       where: { conversationId_userId: { conversationId, userId } },
       data: { lastReadAt: new Date() },
     });
-  },
-
-  async canChatWith(
-    requester: { userId: number; role: UserRole; departmentId: number | null },
-    targetUserId: number
-  ) {
-    if (requester.role === 'super_admin' || requester.role === 'admin') return true;
-
-    // TL and Employee can only chat within their own department
-    const target = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { departmentId: true },
-    });
-
-    if (!target) return false;
-    return target.departmentId === requester.departmentId;
   },
 
   // ============ DEPARTMENT GROUP CHAT METHODS ============

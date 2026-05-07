@@ -10,20 +10,14 @@ export interface UsersFilters {
 }
 
 export const usersService = {
-  async list(filters: UsersFilters, requester: { role: UserRole; departmentId: number | null }) {
+  async list(filters: UsersFilters, _requester: { role: UserRole; departmentId: number | null }) {
     const where: {
       departmentId?: number;
       role?: UserRole;
       status?: 'active' | 'inactive';
     } = {};
 
-    // Super Admin sees all; Team Leader sees only their department
-    if (requester.role === 'team_leader' && requester.departmentId) {
-      where.departmentId = requester.departmentId;
-    } else if (filters.departmentId) {
-      where.departmentId = filters.departmentId;
-    }
-
+    if (filters.departmentId) where.departmentId = filters.departmentId;
     if (filters.role) where.role = filters.role;
     if (filters.status) where.status = filters.status;
 

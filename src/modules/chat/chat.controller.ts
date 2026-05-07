@@ -54,24 +54,10 @@ export const chatController = {
       return badRequest(res, 'Group name is required');
     }
 
-    // Authorization: super_admin/admin can create with anyone.
-    // team_leader can create groups with members of their own department.
-    // employee cannot create groups (only direct chats with same dept).
+    // Only team leaders and admins can create group chats; direct chats are
+    // open to everyone (no per-participant department restriction).
     if (req.user.role === 'employee' && data.type === 'group') {
       return forbidden(res, 'Only team leaders or admins can create group chats');
-    }
-
-    if (req.user.role !== 'super_admin' && req.user.role !== 'admin') {
-      for (const pid of data.participantIds) {
-        if (pid === req.user.userId) continue;
-        const allowed = await chatService.canChatWith(
-          { userId: req.user.userId, role: req.user.role, departmentId: req.user.departmentId },
-          pid
-        );
-        if (!allowed) {
-          return forbidden(res, 'You can only chat with members of your own department');
-        }
-      }
     }
 
     const conv = await chatService.createConversation({
