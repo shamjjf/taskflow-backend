@@ -1,5 +1,6 @@
 import { prisma } from '@/config/prisma';
 import { TaskStatus, TaskPriority, UserRole } from '@prisma/client';
+import { socketEvents } from '@/sockets';
 
 export interface TasksFilters {
   departmentId?: number;
@@ -114,6 +115,8 @@ export const tasksService = {
       )
     );
 
+    socketEvents.taskAssigned(input.assigneeIds, task.departmentId, task);
+
     return task;
   },
 
@@ -175,6 +178,13 @@ export const tasksService = {
       });
     }
 
+    socketEvents.taskStarted(
+      updated.id,
+      updated.departmentId,
+      task.assignees.map((a) => a.userId),
+      updated
+    );
+
     return updated;
   },
 
@@ -219,6 +229,13 @@ export const tasksService = {
         },
       });
     }
+
+    socketEvents.taskCompleted(
+      updated.id,
+      updated.departmentId,
+      task.assignees.map((a) => a.userId),
+      updated
+    );
 
     return updated;
   },
@@ -279,6 +296,13 @@ export const tasksService = {
       )
     );
 
+    socketEvents.taskRejected(
+      updated.id,
+      updated.departmentId,
+      task.assignees.map((a) => a.userId),
+      updated
+    );
+
     return updated;
   },
 
@@ -323,6 +347,13 @@ export const tasksService = {
         },
       });
     }
+
+    socketEvents.taskReviewed(
+      updated.id,
+      updated.departmentId,
+      task.assignees.map((a) => a.userId),
+      updated
+    );
 
     return updated;
   },
