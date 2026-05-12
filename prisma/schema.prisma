@@ -203,6 +203,7 @@ model Report {
   taskId                Int?           @map("task_id")
   task                  Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
   reportType            ReportType     @map("report_type")
+  weeklyObjective       String?        @map("weekly_objective") @db.Text
   description           String         @db.Text
   attachmentUrl         String?        @map("attachment_url") @db.VarChar(500)
   reportDate            DateTime       @map("report_date") @db.Date

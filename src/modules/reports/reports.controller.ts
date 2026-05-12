@@ -6,6 +6,7 @@ import { asyncHandler } from '@/utils/asyncHandler';
 
 const createSchema = z.object({
   reportType: z.enum(['daily', 'weekly', 'task']),
+  weeklyObjective: z.string().optional(),
   description: z.string().min(1),
   taskId: z.number().optional(),
   attachmentUrl: z.string().optional(),
@@ -21,6 +22,7 @@ const rejectSchema = z.object({
 
 const resubmitSchema = z.object({
   reportType: z.enum(['daily', 'weekly', 'task']).optional(),
+  weeklyObjective: z.string().nullable().optional(),
   description: z.string().min(1),
   taskId: z.number().nullable().optional(),
   attachmentUrl: z.string().nullable().optional(),
@@ -54,6 +56,7 @@ export const reportsController = {
     const report = await reportsService.create({
       userId: req.user.userId,
       reportType: data.reportType,
+      weeklyObjective: data.reportType === 'weekly' ? data.weeklyObjective : undefined,
       description: data.description,
       taskId: data.taskId,
       attachmentUrl: data.attachmentUrl,

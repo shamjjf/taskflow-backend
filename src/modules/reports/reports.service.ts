@@ -64,6 +64,7 @@ export const reportsService = {
   async create(data: {
     userId: number;
     reportType: ReportType;
+    weeklyObjective?: string;
     description: string;
     taskId?: number;
     attachmentUrl?: string;
@@ -73,6 +74,7 @@ export const reportsService = {
       data: {
         userId: data.userId,
         reportType: data.reportType,
+        weeklyObjective: data.reportType === 'weekly' ? data.weeklyObjective : null,
         description: data.description,
         taskId: data.taskId,
         attachmentUrl: data.attachmentUrl,
@@ -115,15 +117,24 @@ export const reportsService = {
     data: {
       description: string;
       reportType?: ReportType;
+      weeklyObjective?: string | null;
       taskId?: number | null;
       attachmentUrl?: string | null;
     }
   ) {
+    const effectiveType = data.reportType;
     return prisma.report.update({
       where: { id },
       data: {
         description: data.description,
-        ...(data.reportType ? { reportType: data.reportType } : {}),
+        ...(effectiveType ? { reportType: effectiveType } : {}),
+        ...(effectiveType === 'weekly'
+          ? { weeklyObjective: data.weeklyObjective ?? null }
+          : effectiveType
+          ? { weeklyObjective: null }
+          : data.weeklyObjective !== undefined
+          ? { weeklyObjective: data.weeklyObjective }
+          : {}),
         ...(data.taskId !== undefined ? { taskId: data.taskId } : {}),
         ...(data.attachmentUrl !== undefined ? { attachmentUrl: data.attachmentUrl } : {}),
         approvalStatus: 'pending',
