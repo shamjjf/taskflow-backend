@@ -29,11 +29,15 @@ const resubmitSchema = z.object({
 export const reportsController = {
   list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const reports = await reportsService.list({
-      userId: req.user.userId,
-      role: req.user.role,
-      departmentId: req.user.departmentId,
-    });
+    const scope = req.query.scope === 'mine' ? 'mine' : 'all';
+    const reports = await reportsService.list(
+      {
+        userId: req.user.userId,
+        role: req.user.role,
+        departmentId: req.user.departmentId,
+      },
+      { scope }
+    );
     return ok(res, reports);
   }),
 

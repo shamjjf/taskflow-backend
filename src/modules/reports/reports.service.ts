@@ -8,10 +8,15 @@ const reportInclude = {
 };
 
 export const reportsService = {
-  async list(requester: { userId: number; role: UserRole; departmentId: number | null }) {
+  async list(
+    requester: { userId: number; role: UserRole; departmentId: number | null },
+    options: { scope?: 'mine' | 'all' } = {}
+  ) {
     const where: Record<string, unknown> = {};
 
-    if (requester.role === 'employee') {
+    if (options.scope === 'mine') {
+      where.userId = requester.userId;
+    } else if (requester.role === 'employee') {
       where.userId = requester.userId;
     } else if (requester.role === 'team_leader' && requester.departmentId) {
       where.user = { departmentId: requester.departmentId };
