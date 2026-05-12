@@ -104,4 +104,30 @@ export const reportsService = {
       include: reportInclude,
     });
   },
+
+  async resubmit(
+    id: number,
+    data: {
+      description: string;
+      reportType?: ReportType;
+      taskId?: number | null;
+      attachmentUrl?: string | null;
+    }
+  ) {
+    return prisma.report.update({
+      where: { id },
+      data: {
+        description: data.description,
+        ...(data.reportType ? { reportType: data.reportType } : {}),
+        ...(data.taskId !== undefined ? { taskId: data.taskId } : {}),
+        ...(data.attachmentUrl !== undefined ? { attachmentUrl: data.attachmentUrl } : {}),
+        approvalStatus: 'pending',
+        visibleToSuperAdmin: false,
+        reviewedById: null,
+        reviewedAt: null,
+        reviewComment: null,
+      },
+      include: reportInclude,
+    });
+  },
 };

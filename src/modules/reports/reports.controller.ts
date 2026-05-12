@@ -19,6 +19,13 @@ const rejectSchema = z.object({
   comment: z.string().min(1, 'Rejection comment is required'),
 });
 
+const resubmitSchema = z.object({
+  reportType: z.enum(['daily', 'weekly', 'task']).optional(),
+  description: z.string().min(1),
+  taskId: z.number().nullable().optional(),
+  attachmentUrl: z.string().nullable().optional(),
+});
+
 export const reportsController = {
   list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
@@ -93,5 +100,24 @@ export const reportsController = {
     const { comment } = rejectSchema.parse(req.body);
     const rejected = await reportsService.reject(id, req.user.userId, comment);
     return ok(res, rejected, 'Report rejected. Employee has been notified.');
+  }),
+
+  resubmit: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const id = parseInt(req.params.id, 10);
+
+    const existing = await reportsService.getById(id);
+    if (!existing) return notFound(res, 'Report not found');
+
+    if (existing.userId !== req.user.userId) {
+      return forbidden(res, 'You can only resubmit your own reports');
+    }
+    if (existing.approvalStatus !== 'rejected') {
+      return forbidden(res, 'Only rejected reports can be resubmitted');
+    }
+
+    const data = resubmitSchema.parse(req.body);
+    const updated = await reportsService.resubmit(id, data);
+    return ok(res, updated, 'Report resubmitted. Your Team Leader has been notified.');
   }),
 };

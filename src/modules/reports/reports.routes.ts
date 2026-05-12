@@ -15,5 +15,6 @@ router.post('/', reportsController.create);
 
 router.put('/:id/approve', reportsController.approve);
 router.put('/:id/reject', reportsController.reject);
+router.put('/:id/resubmit', reportsController.resubmit);
 
 export default router;
