@@ -1,8 +1,9 @@
 import { prisma } from '@/config/prisma';
 import { ReportType, ApprovalStatus, UserRole } from '@prisma/client';
+import { socketEvents } from '@/sockets';
 
 const reportInclude = {
-  user: { select: { id: true, name: true, department: { select: { name: true } } } },
+  user: { select: { id: true, name: true, department: { select: { id: true, name: true, teamLeaderId: true } } } },
   task: { select: { id: true, title: true } },
   reviewedBy: { select: { id: true, name: true } },
 };
@@ -70,7 +71,7 @@ export const reportsService = {
     attachmentUrl?: string;
     reportDate: Date;
   }) {
-    return prisma.report.create({
+    const report = await prisma.report.create({
       data: {
         userId: data.userId,
         reportType: data.reportType,
@@ -84,10 +85,17 @@ export const reportsService = {
       },
       include: reportInclude,
     });
+
+    const tlId = report.user.department?.teamLeaderId ?? null;
+    if (tlId && tlId !== data.userId) {
+      socketEvents.reportSubmitted(tlId, report);
+    }
+
+    return report;
   },
 
   async approve(id: number, reviewedById: number) {
-    return prisma.report.update({
+    const report = await prisma.report.update({
       where: { id },
       data: {
         approvalStatus: 'approved',
@@ -97,10 +105,14 @@ export const reportsService = {
       },
       include: reportInclude,
     });
+
+    socketEvents.reportApproved(report.userId, report);
+
+    return report;
   },
 
   async reject(id: number, reviewedById: number, comment: string) {
-    return prisma.report.update({
+    const report = await prisma.report.update({
       where: { id },
       data: {
         approvalStatus: 'rejected',
@@ -110,6 +122,10 @@ export const reportsService = {
       },
       include: reportInclude,
     });
+
+    socketEvents.reportRejected(report.userId, report);
+
+    return report;
   },
 
   async resubmit(
@@ -123,7 +139,7 @@ export const reportsService = {
     }
   ) {
     const effectiveType = data.reportType;
-    return prisma.report.update({
+    const report = await prisma.report.update({
       where: { id },
       data: {
         description: data.description,
@@ -145,5 +161,12 @@ export const reportsService = {
       },
       include: reportInclude,
     });
+
+    const tlId = report.user.department?.teamLeaderId ?? null;
+    if (tlId && tlId !== report.userId) {
+      socketEvents.reportSubmitted(tlId, report);
+    }
+
+    return report;
   },
 };
