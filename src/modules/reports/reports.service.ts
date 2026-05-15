@@ -21,6 +21,10 @@ export const reportsService = {
       where.userId = requester.userId;
     } else if (requester.role === 'team_leader' && requester.departmentId) {
       where.user = { departmentId: requester.departmentId };
+    } else if (requester.role === 'admin') {
+      // Admin sees the full lifecycle of reports authored by TLs and employees,
+      // but never reports authored by other admins or the super admin.
+      where.user = { role: { notIn: ['admin', 'super_admin'] } };
     } else if (requester.role === 'super_admin') {
       // Super Admin only sees approved reports that are flagged visible
       where.visibleToSuperAdmin = true;
@@ -71,6 +75,12 @@ export const reportsService = {
     attachmentUrl?: string;
     reportDate: Date;
   }) {
+    const author = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { role: true },
+    });
+    const isAdminAuthored = author?.role === 'admin';
+
     const report = await prisma.report.create({
       data: {
         userId: data.userId,
@@ -80,15 +90,18 @@ export const reportsService = {
         taskId: data.taskId,
         attachmentUrl: data.attachmentUrl,
         reportDate: data.reportDate,
-        approvalStatus: 'pending',
-        visibleToSuperAdmin: false,
+        // Admin reports skip TL review and are immediately visible to super admin.
+        approvalStatus: isAdminAuthored ? 'approved' : 'pending',
+        visibleToSuperAdmin: isAdminAuthored,
       },
       include: reportInclude,
     });
 
-    const tlId = report.user.department?.teamLeaderId ?? null;
-    if (tlId && tlId !== data.userId) {
-      socketEvents.reportSubmitted(tlId, report);
+    if (!isAdminAuthored) {
+      const tlId = report.user.department?.teamLeaderId ?? null;
+      if (tlId && tlId !== data.userId) {
+        socketEvents.reportSubmitted(tlId, report);
+      }
     }
 
     return report;
