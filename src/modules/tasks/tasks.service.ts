@@ -47,6 +47,11 @@ export const tasksService = {
       if (requester.departmentId) {
         where.AND.push({ departmentId: requester.departmentId });
       }
+    } else if (requester.role === 'admin') {
+      // Admin sees tasks org-wide except those created by other admins or the super admin.
+      where.AND.push({
+        createdBy: { role: { notIn: ['admin', 'super_admin'] } },
+      });
     }
 
     if (filters.departmentId) where.AND.push({ departmentId: filters.departmentId });
