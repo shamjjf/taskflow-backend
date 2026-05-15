@@ -17,7 +17,7 @@ const registerSchema = z.object({
   name: z.string().min(2).max(150),
   email: z.string().email(),
   password: z.string().min(6),
-  role: z.enum(['super_admin', 'team_leader', 'employee']),
+  role: z.enum(['super_admin', 'admin', 'team_leader', 'employee']),
   departmentId: z.number().optional(),
   designation: z.string().optional(),
 });

@@ -16,4 +16,5 @@ export function requireRole(...allowedRoles: UserRole[]) {
 
 export const requireSuperAdmin = requireRole('super_admin');
 export const requireTeamLeader = requireRole('team_leader');
-export const requireTLOrAbove = requireRole('super_admin', 'team_leader');
+export const requireAdminOrAbove = requireRole('super_admin', 'admin');
+export const requireTLOrAbove = requireRole('super_admin', 'admin', 'team_leader');
