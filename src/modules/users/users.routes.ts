@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { usersController } from './users.controller';
 import { requireAuth } from '@/middleware/auth';
-import { requireSuperAdmin } from '@/middleware/roleCheck';
+import { requireAdminOrAbove } from '@/middleware/roleCheck';
 
 const router = Router();
 
@@ -13,10 +13,10 @@ router.put('/me/profile', usersController.updateMe);
 router.get('/', usersController.list);
 router.get('/:id', usersController.get);
 
-// Super Admin only
-router.post('/', requireSuperAdmin, usersController.create);
-router.put('/:id', requireSuperAdmin, usersController.update);
-router.put('/:id/status', requireSuperAdmin, usersController.updateStatus);
-router.delete('/:id', requireSuperAdmin, usersController.remove);
+// Admin and Super Admin (controller enforces role restrictions on targets)
+router.post('/', requireAdminOrAbove, usersController.create);
+router.put('/:id', requireAdminOrAbove, usersController.update);
+router.put('/:id/status', requireAdminOrAbove, usersController.updateStatus);
+router.delete('/:id', requireAdminOrAbove, usersController.remove);
 
 export default router;
