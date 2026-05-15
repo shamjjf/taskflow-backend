@@ -3,7 +3,14 @@ import { ReportType, ApprovalStatus, UserRole } from '@prisma/client';
 import { socketEvents } from '@/sockets';
 
 const reportInclude = {
-  user: { select: { id: true, name: true, department: { select: { id: true, name: true, teamLeaderId: true } } } },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      department: { select: { id: true, name: true, teamLeaderId: true } },
+    },
+  },
   task: { select: { id: true, title: true } },
   reviewedBy: { select: { id: true, name: true } },
 };
@@ -41,8 +48,27 @@ export const reportsService = {
     return prisma.report.findMany({
       where: {
         approvalStatus: 'pending',
-        user: { departmentId: teamLeaderDeptId },
+        user: { departmentId: teamLeaderDeptId, role: { notIn: ['admin', 'super_admin'] } },
       },
+      include: reportInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+
+  async getPendingForSuperAdmin() {
+    return prisma.report.findMany({
+      where: {
+        approvalStatus: 'pending',
+        user: { role: 'admin' },
+      },
+      include: reportInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+
+  async getAllAdminReports() {
+    return prisma.report.findMany({
+      where: { user: { role: 'admin' } },
       include: reportInclude,
       orderBy: { createdAt: 'desc' },
     });
@@ -90,14 +116,15 @@ export const reportsService = {
         taskId: data.taskId,
         attachmentUrl: data.attachmentUrl,
         reportDate: data.reportDate,
-        // Admin reports skip TL review and are immediately visible to super admin.
-        approvalStatus: isAdminAuthored ? 'approved' : 'pending',
-        visibleToSuperAdmin: isAdminAuthored,
+        approvalStatus: 'pending',
+        visibleToSuperAdmin: false,
       },
       include: reportInclude,
     });
 
-    if (!isAdminAuthored) {
+    if (isAdminAuthored) {
+      socketEvents.reportSubmittedToSuperAdmin(report);
+    } else {
       const tlId = report.user.department?.teamLeaderId ?? null;
       if (tlId && tlId !== data.userId) {
         socketEvents.reportSubmitted(tlId, report);
@@ -175,9 +202,13 @@ export const reportsService = {
       include: reportInclude,
     });
 
-    const tlId = report.user.department?.teamLeaderId ?? null;
-    if (tlId && tlId !== report.userId) {
-      socketEvents.reportSubmitted(tlId, report);
+    if (report.user.role === 'admin') {
+      socketEvents.reportSubmittedToSuperAdmin(report);
+    } else {
+      const tlId = report.user.department?.teamLeaderId ?? null;
+      if (tlId && tlId !== report.userId) {
+        socketEvents.reportSubmitted(tlId, report);
+      }
     }
 
     return report;

@@ -125,6 +125,10 @@ export const socketEvents = {
     getIO().to(`user:${tlUserId}`).emit('report:submitted', report);
   },
 
+  reportSubmittedToSuperAdmin(report: unknown) {
+    getIO().to('role:super_admin').emit('report:admin_submitted', report);
+  },
+
   reportApproved(authorUserId: number, report: unknown) {
     getIO().to(`user:${authorUserId}`).emit('report:approved', report);
     getIO().to('role:super_admin').emit('report:new_approved', report);
