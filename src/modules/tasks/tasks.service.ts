@@ -1,6 +1,7 @@
 import { prisma } from '@/config/prisma';
 import { TaskStatus, TaskPriority, UserRole } from '@prisma/client';
 import { socketEvents } from '@/sockets';
+import { notificationsService } from '@/modules/notifications/notifications.service';
 
 export interface TasksFilters {
   departmentId?: number;
@@ -173,8 +174,8 @@ export const tasksService = {
     });
 
     // Notify Team Leader that the task has started
+    const starter = await prisma.user.findUnique({ where: { id: userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
-      const starter = await prisma.user.findUnique({ where: { id: userId } });
       await prisma.notification.create({
         data: {
           userId: task.department.teamLeader.id,
@@ -186,6 +187,15 @@ export const tasksService = {
         },
       });
     }
+
+    // Mirror to all admins (department-wide visibility)
+    await notificationsService.createForAdmins({
+      type: 'task_started',
+      title: 'Task started',
+      message: `${starter?.name || 'A team member'} started working on "${task.title}" in ${task.department.name}`,
+      referenceType: 'task',
+      referenceId: task.id,
+    });
 
     socketEvents.taskStarted(
       updated.id,
@@ -225,8 +235,8 @@ export const tasksService = {
     });
 
     // Notify Team Leader that the task is complete
+    const finisher = await prisma.user.findUnique({ where: { id: requester.userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== requester.userId) {
-      const finisher = await prisma.user.findUnique({ where: { id: requester.userId } });
       await prisma.notification.create({
         data: {
           userId: task.department.teamLeader.id,
@@ -238,6 +248,15 @@ export const tasksService = {
         },
       });
     }
+
+    // Mirror to all admins (department-wide visibility)
+    await notificationsService.createForAdmins({
+      type: 'task_completed',
+      title: 'Task completed',
+      message: `${finisher?.name || 'A team member'} completed "${task.title}" in ${task.department.name}`,
+      referenceType: 'task',
+      referenceId: task.id,
+    });
 
     socketEvents.taskCompleted(
       updated.id,
@@ -343,8 +362,8 @@ export const tasksService = {
     });
 
     // Notify Team Leader that the task is ready for review
+    const submitter = await prisma.user.findUnique({ where: { id: userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
-      const submitter = await prisma.user.findUnique({ where: { id: userId } });
       await prisma.notification.create({
         data: {
           userId: task.department.teamLeader.id,
@@ -356,6 +375,15 @@ export const tasksService = {
         },
       });
     }
+
+    // Mirror to all admins (department-wide visibility)
+    await notificationsService.createForAdmins({
+      type: 'task_review',
+      title: 'Task submitted for review',
+      message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review in ${task.department.name}`,
+      referenceType: 'task',
+      referenceId: task.id,
+    });
 
     socketEvents.taskReviewed(
       updated.id,

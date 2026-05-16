@@ -34,6 +34,23 @@ export const notificationsService = {
     return prisma.notification.createMany({ data: items });
   },
 
+  async createForAdmins(payload: {
+    type: NotificationType;
+    title: string;
+    message: string;
+    referenceType?: ReferenceType;
+    referenceId?: number;
+  }) {
+    const admins = await prisma.user.findMany({
+      where: { role: 'admin' },
+      select: { id: true },
+    });
+    if (admins.length === 0) return;
+    await prisma.notification.createMany({
+      data: admins.map((a) => ({ userId: a.id, ...payload })),
+    });
+  },
+
   async markRead(id: number, userId: number) {
     return prisma.notification.updateMany({
       where: { id, userId },
