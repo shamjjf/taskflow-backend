@@ -83,30 +83,67 @@ export const reportsController = {
     return ok(res, reports);
   }),
 
+  pendingForSuperAdmin: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    if (req.user.role !== 'super_admin') {
+      return forbidden(res, 'Only Super Admin can view pending admin reports');
+    }
+    const reports = await reportsService.getPendingForSuperAdmin();
+    return ok(res, reports);
+  }),
+
+  allAdminReports: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    if (req.user.role !== 'super_admin') {
+      return forbidden(res, 'Only Super Admin can view admin reports history');
+    }
+    const reports = await reportsService.getAllAdminReports();
+    return ok(res, reports);
+  }),
+
   approve: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    if (req.user.role !== 'team_leader') {
-      return forbidden(res, 'Only Team Leaders can approve reports');
-    }
     const id = parseInt(req.params.id, 10);
 
-    // Verify the report exists
     const report = await reportsService.getById(id);
     if (!report) return notFound(res, 'Report not found');
 
+    const isAdminAuthored = report.user.role === 'admin';
+    if (isAdminAuthored) {
+      if (req.user.role !== 'super_admin') {
+        return forbidden(res, 'Only the Super Admin can approve admin reports');
+      }
+    } else {
+      if (req.user.role !== 'team_leader') {
+        return forbidden(res, 'Only Team Leaders can approve reports');
+      }
+    }
+
     const approved = await reportsService.approve(id, req.user.userId);
-    return ok(res, approved, 'Report approved. Super Admin can now see it.');
+    return ok(res, approved, 'Report approved.');
   }),
 
   reject: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    if (req.user.role !== 'team_leader') {
-      return forbidden(res, 'Only Team Leaders can reject reports');
-    }
     const id = parseInt(req.params.id, 10);
+
+    const report = await reportsService.getById(id);
+    if (!report) return notFound(res, 'Report not found');
+
+    const isAdminAuthored = report.user.role === 'admin';
+    if (isAdminAuthored) {
+      if (req.user.role !== 'super_admin') {
+        return forbidden(res, 'Only the Super Admin can reject admin reports');
+      }
+    } else {
+      if (req.user.role !== 'team_leader') {
+        return forbidden(res, 'Only Team Leaders can reject reports');
+      }
+    }
+
     const { comment } = rejectSchema.parse(req.body);
     const rejected = await reportsService.reject(id, req.user.userId, comment);
-    return ok(res, rejected, 'Report rejected. Employee has been notified.');
+    return ok(res, rejected, 'Report rejected. The author has been notified.');
   }),
 
   resubmit: asyncHandler(async (req: Request, res: Response) => {

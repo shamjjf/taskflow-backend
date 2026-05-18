@@ -1,19 +1,20 @@
 import { Router } from 'express';
 import { analyticsService } from './analytics.service';
 import { requireAuth } from '@/middleware/auth';
-import { requireSuperAdmin } from '@/middleware/roleCheck';
+import { requireAdminOrAbove } from '@/middleware/roleCheck';
 import { asyncHandler } from '@/utils/asyncHandler';
-import { ok } from '@/utils/response';
+import { ok, unauthorized } from '@/utils/response';
 
 const router = Router();
 
-router.use(requireAuth, requireSuperAdmin);
+router.use(requireAuth, requireAdminOrAbove);
 
 router.get(
   '/dashboard',
   asyncHandler(async (req, res) => {
+    if (!req.user) return unauthorized(res);
     const period = req.query.period as string | undefined;
-    const stats = await analyticsService.dashboard(period);
+    const stats = await analyticsService.dashboard(period, req.user.role);
     return ok(res, stats);
   })
 );
@@ -21,8 +22,9 @@ router.get(
 router.get(
   '/tasks-by-department',
   asyncHandler(async (req, res) => {
+    if (!req.user) return unauthorized(res);
     const period = req.query.period as string | undefined;
-    const data = await analyticsService.tasksByDepartment(period);
+    const data = await analyticsService.tasksByDepartment(period, req.user.role);
     return ok(res, data);
   })
 );

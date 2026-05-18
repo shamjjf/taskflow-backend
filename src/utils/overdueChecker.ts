@@ -1,4 +1,5 @@
 import { prisma } from '@/config/prisma';
+import { notificationsService } from '@/modules/notifications/notifications.service';
 
 /**
  * Checks for tasks past their deadline and:
@@ -58,6 +59,30 @@ export async function checkOverdueTasks(): Promise<void> {
             referenceType: 'task',
             referenceId: task.id,
           },
+        });
+      }
+    }
+
+    // Notify all admins (department-wide visibility), once per task per 24h
+    {
+      const assigneeNames = task.assignees.map((a) => a.user.name).join(', ');
+      const existingForAdmin = await prisma.notification.findFirst({
+        where: {
+          user: { role: 'admin' },
+          type: 'task_overdue',
+          referenceType: 'task',
+          referenceId: task.id,
+          createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        },
+      });
+
+      if (!existingForAdmin) {
+        await notificationsService.createForAdmins({
+          type: 'task_overdue',
+          title: 'Task overdue',
+          message: `"${task.title}" is overdue in ${task.department.name}. Assigned to: ${assigneeNames}`,
+          referenceType: 'task',
+          referenceId: task.id,
         });
       }
     }

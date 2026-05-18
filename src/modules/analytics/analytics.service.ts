@@ -1,4 +1,5 @@
 import { prisma } from '@/config/prisma';
+import { UserRole } from '@prisma/client';
 
 export type AnalyticsPeriod = '7' | '30' | 'quarter';
 
@@ -21,16 +22,25 @@ function periodStart(period?: string): Date | null {
   return null;
 }
 
+// Admin's dashboard excludes tasks created by other admins or the super admin.
+function creatorFilter(requesterRole?: UserRole) {
+  if (requesterRole === 'admin') {
+    return { createdBy: { role: { notIn: ['admin', 'super_admin'] as UserRole[] } } };
+  }
+  return {};
+}
+
 export const analyticsService = {
-  async dashboard(period?: string) {
+  async dashboard(period?: string, requesterRole?: UserRole) {
     const start = periodStart(period);
     const dateFilter = start ? { createdAt: { gte: start } } : {};
+    const scope = creatorFilter(requesterRole);
 
     const [total, inProgress, completed, overdue] = await Promise.all([
-      prisma.task.count({ where: dateFilter }),
-      prisma.task.count({ where: { ...dateFilter, status: 'in_progress' } }),
-      prisma.task.count({ where: { ...dateFilter, status: 'completed' } }),
-      prisma.task.count({ where: { ...dateFilter, status: 'overdue' } }),
+      prisma.task.count({ where: { ...dateFilter, ...scope } }),
+      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'in_progress' } }),
+      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'completed' } }),
+      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'overdue' } }),
     ]);
 
     return {
@@ -41,9 +51,10 @@ export const analyticsService = {
     };
   },
 
-  async tasksByDepartment(period?: string) {
+  async tasksByDepartment(period?: string, requesterRole?: UserRole) {
     const start = periodStart(period);
     const dateFilter = start ? { createdAt: { gte: start } } : {};
+    const scope = creatorFilter(requesterRole);
 
     const depts = await prisma.department.findMany({
       include: {
@@ -59,10 +70,10 @@ export const analyticsService = {
       depts.map(async (d) => ({
         label: d.name,
         completed: await prisma.task.count({
-          where: { ...dateFilter, departmentId: d.id, status: 'completed' },
+          where: { ...dateFilter, ...scope, departmentId: d.id, status: 'completed' },
         }),
         inProgress: await prisma.task.count({
-          where: { ...dateFilter, departmentId: d.id, status: 'in_progress' },
+          where: { ...dateFilter, ...scope, departmentId: d.id, status: 'in_progress' },
         }),
       }))
     );

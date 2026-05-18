@@ -3,7 +3,14 @@ import { ReportType, ApprovalStatus, UserRole } from '@prisma/client';
 import { socketEvents } from '@/sockets';
 
 const reportInclude = {
-  user: { select: { id: true, name: true, department: { select: { id: true, name: true, teamLeaderId: true } } } },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      department: { select: { id: true, name: true, teamLeaderId: true } },
+    },
+  },
   task: { select: { id: true, title: true } },
   reviewedBy: { select: { id: true, name: true } },
 };
@@ -21,6 +28,10 @@ export const reportsService = {
       where.userId = requester.userId;
     } else if (requester.role === 'team_leader' && requester.departmentId) {
       where.user = { departmentId: requester.departmentId };
+    } else if (requester.role === 'admin') {
+      // Admin sees the full lifecycle of reports authored by TLs and employees,
+      // but never reports authored by other admins or the super admin.
+      where.user = { role: { notIn: ['admin', 'super_admin'] } };
     } else if (requester.role === 'super_admin') {
       // Super Admin only sees approved reports that are flagged visible
       where.visibleToSuperAdmin = true;
@@ -37,8 +48,27 @@ export const reportsService = {
     return prisma.report.findMany({
       where: {
         approvalStatus: 'pending',
-        user: { departmentId: teamLeaderDeptId },
+        user: { departmentId: teamLeaderDeptId, role: { notIn: ['admin', 'super_admin'] } },
       },
+      include: reportInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+
+  async getPendingForSuperAdmin() {
+    return prisma.report.findMany({
+      where: {
+        approvalStatus: 'pending',
+        user: { role: 'admin' },
+      },
+      include: reportInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+  },
+
+  async getAllAdminReports() {
+    return prisma.report.findMany({
+      where: { user: { role: 'admin' } },
       include: reportInclude,
       orderBy: { createdAt: 'desc' },
     });
@@ -71,6 +101,12 @@ export const reportsService = {
     attachmentUrl?: string;
     reportDate: Date;
   }) {
+    const author = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { role: true },
+    });
+    const isAdminAuthored = author?.role === 'admin';
+
     const report = await prisma.report.create({
       data: {
         userId: data.userId,
@@ -86,9 +122,13 @@ export const reportsService = {
       include: reportInclude,
     });
 
-    const tlId = report.user.department?.teamLeaderId ?? null;
-    if (tlId && tlId !== data.userId) {
-      socketEvents.reportSubmitted(tlId, report);
+    if (isAdminAuthored) {
+      socketEvents.reportSubmittedToSuperAdmin(report);
+    } else {
+      const tlId = report.user.department?.teamLeaderId ?? null;
+      if (tlId && tlId !== data.userId) {
+        socketEvents.reportSubmitted(tlId, report);
+      }
     }
 
     return report;
@@ -162,9 +202,13 @@ export const reportsService = {
       include: reportInclude,
     });
 
-    const tlId = report.user.department?.teamLeaderId ?? null;
-    if (tlId && tlId !== report.userId) {
-      socketEvents.reportSubmitted(tlId, report);
+    if (report.user.role === 'admin') {
+      socketEvents.reportSubmittedToSuperAdmin(report);
+    } else {
+      const tlId = report.user.department?.teamLeaderId ?? null;
+      if (tlId && tlId !== report.userId) {
+        socketEvents.reportSubmitted(tlId, report);
+      }
     }
 
     return report;

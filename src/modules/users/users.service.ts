@@ -10,16 +10,29 @@ export interface UsersFilters {
 }
 
 export const usersService = {
-  async list(filters: UsersFilters, _requester: { role: UserRole; departmentId: number | null }) {
+  async list(filters: UsersFilters, requester: { role: UserRole; departmentId: number | null }) {
     const where: {
       departmentId?: number;
-      role?: UserRole;
+      role?: UserRole | { in?: UserRole[]; notIn?: UserRole[] };
       status?: 'active' | 'inactive';
     } = {};
 
     if (filters.departmentId) where.departmentId = filters.departmentId;
-    if (filters.role) where.role = filters.role;
     if (filters.status) where.status = filters.status;
+
+    if (requester.role === 'admin') {
+      if (filters.role) {
+        if (filters.role === 'admin' || filters.role === 'super_admin') {
+          where.role = { in: [] };
+        } else {
+          where.role = filters.role;
+        }
+      } else {
+        where.role = { notIn: ['admin', 'super_admin'] };
+      }
+    } else if (filters.role) {
+      where.role = filters.role;
+    }
 
     return prisma.user.findMany({
       where,
