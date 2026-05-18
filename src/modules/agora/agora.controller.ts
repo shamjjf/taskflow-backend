@@ -5,6 +5,8 @@ import { ok, unauthorized } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { socketEvents } from '@/sockets';
 import { prisma } from '@/config/prisma';
+import { callSessions, type CallSession } from './callSessions';
+import { chatService, type CallEventData, type CallEventOutcome } from '../chat/chat.service';
 
 const tokenSchema = z.object({
   channelName: z.string().min(1).max(64),
@@ -16,6 +18,7 @@ const ringSchema = z.object({
   callType: z.enum(['audio', 'video']),
   participantIds: z.array(z.number()).min(1), // Who to ring
   isGroup: z.boolean().optional(),
+  groupName: z.string().max(150).optional(),
 });
 
 const callActionSchema = z.object({
@@ -23,6 +26,39 @@ const callActionSchema = z.object({
   participantIds: z.array(z.number()).min(1),
   isGroup: z.boolean().optional(),
 });
+
+/**
+ * Finalize a session: build the CallEventData payload, persist it as a
+ * chat message, and broadcast it on the conversation socket room so both
+ * sides see the new entry in real time.
+ */
+async function logCallEvent(session: CallSession, outcome: CallEventOutcome) {
+  const endedAt = new Date();
+  const durationSec =
+    outcome === 'answered' && session.acceptedAt
+      ? Math.max(0, Math.round((endedAt.getTime() - session.acceptedAt.getTime()) / 1000))
+      : 0;
+
+  const data: CallEventData = {
+    callType: session.callType,
+    outcome,
+    callerId: session.callerId,
+    channelName: session.channelName,
+    startedAt: session.startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    durationSec,
+    isGroup: session.isGroup,
+    participantIds: session.participantIds,
+  };
+
+  try {
+    const message = await chatService.createCallEventMessage(session.conversationId, data);
+    socketEvents.newMessage(session.conversationId, message);
+  } catch (err) {
+    // Never let logging failures break the call signaling path.
+    console.error('[Call] Failed to log call event:', err);
+  }
+}
 
 export const agoraController = {
   /**
@@ -56,6 +92,16 @@ export const agoraController = {
     // Don't ring yourself
     const targetIds = data.participantIds.filter((id) => id !== req.user!.userId);
 
+    // Track this call so we can log the outcome to chat when it ends.
+    callSessions.create({
+      channelName: data.channelName,
+      conversationId: data.conversationId,
+      callerId: req.user.userId,
+      callType: data.callType,
+      isGroup: data.isGroup ?? false,
+      participantIds: targetIds,
+    });
+
     // Fetch the caller's name + profile so receivers can show a real identity,
     // not just `john` from `john@example.com`.
     const caller = await prisma.user.findUnique({
@@ -68,6 +114,7 @@ export const agoraController = {
       channelName: data.channelName,
       callType: data.callType,
       isGroup: data.isGroup ?? false,
+      groupName: data.groupName,
       caller: {
         id: req.user.userId,
         name: caller?.name || req.user.email.split('@')[0],
@@ -90,6 +137,8 @@ export const agoraController = {
     if (!req.user) return unauthorized(res);
 
     const data = callActionSchema.parse(req.body);
+
+    callSessions.markAccepted(data.channelName, req.user.userId);
 
     socketEvents.callAccepted(data.participantIds, {
       channelName: data.channelName,
@@ -119,6 +168,18 @@ export const agoraController = {
       isGroup: data.isGroup ?? false,
     });
 
+    // For 1-on-1 calls, a rejection terminates the call. For groups, other
+    // members may still pick up so we don't finalize yet — the caller's
+    // eventual `end` call will be what closes the session.
+    const session = callSessions.get(data.channelName);
+    const isGroup = data.isGroup ?? session?.isGroup ?? false;
+    if (!isGroup) {
+      const removed = callSessions.remove(data.channelName);
+      if (removed) {
+        await logCallEvent(removed, 'declined');
+      }
+    }
+
     return ok(res, { rejected: true });
   }),
 
@@ -140,6 +201,16 @@ export const agoraController = {
       endedBy: req.user.userId,
       isGroup: data.isGroup ?? false,
     });
+
+    const removed = callSessions.remove(data.channelName);
+    if (removed) {
+      const outcome: CallEventOutcome = removed.acceptedAt
+        ? 'answered'
+        : removed.callerId === req.user.userId
+          ? 'cancelled'
+          : 'missed';
+      await logCallEvent(removed, outcome);
+    }
 
     return ok(res, { ended: true });
   }),

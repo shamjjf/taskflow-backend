@@ -52,6 +52,11 @@ enum ConversationType {
   group
 }
 
+enum MessageType {
+  text
+  call_event
+}
+
 enum NotificationType {
   task_assigned
   task_started
@@ -260,6 +265,8 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
   message        String       @db.Text
   attachmentUrl  String?      @map("attachment_url") @db.VarChar(500)
+  messageType    MessageType  @default(text) @map("message_type")
+  callEventData  Json?        @map("call_event_data")
   isDeleted      Boolean      @default(false) @map("is_deleted")
   createdAt      DateTime     @default(now()) @map("created_at")
 
