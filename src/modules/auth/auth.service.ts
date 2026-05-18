@@ -102,6 +102,37 @@ export const authService = {
     };
   },
 
+  async changePassword(userId: number, currentPassword: string, newPassword: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, passwordHash: true },
+    });
+    if (!user) throw new Error('User not found');
+
+    const isValid = await comparePassword(currentPassword, user.passwordHash);
+    if (!isValid) throw new Error('Current password is incorrect');
+
+    const newHash = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash, refreshToken: null },
+    });
+  },
+
+  async setUserPassword(userId: number, newPassword: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) throw new Error('User not found');
+
+    const newHash = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash, refreshToken: null },
+    });
+  },
+
   async register(data: {
     name: string;
     email: string;

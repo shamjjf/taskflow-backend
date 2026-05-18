@@ -114,7 +114,15 @@ export const usersService = {
 
   async update(
     id: number,
-    data: { name?: string; designation?: string; phone?: string; profileImage?: string }
+    data: {
+      name?: string;
+      designation?: string;
+      phone?: string;
+      profileImage?: string;
+      email?: string;
+      departmentId?: number | null;
+      status?: 'active' | 'inactive';
+    }
   ) {
     return prisma.user.update({
       where: { id },
@@ -125,7 +133,13 @@ export const usersService = {
         email: true,
         role: true,
         departmentId: true,
+        department: { select: { name: true } },
         designation: true,
+        phone: true,
+        profileImage: true,
+        status: true,
+        lastLoginAt: true,
+        createdAt: true,
       },
     });
   },

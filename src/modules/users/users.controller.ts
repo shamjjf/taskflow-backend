@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { usersService } from './users.service';
-import { ok, created, notFound, unauthorized, forbidden } from '@/utils/response';
+import { authService } from '../auth/auth.service';
+import { ok, created, notFound, unauthorized, forbidden, badRequest } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { UserRole } from '@prisma/client';
 
@@ -21,8 +22,25 @@ const updateSchema = z.object({
   profileImage: z.string().optional(),
 });
 
+// Self-update schema includes additional fields that only super admins are
+// allowed to change about themselves (email, department, status). The
+// controller filters these out for non-super-admin callers.
+const selfUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  designation: z.string().optional(),
+  phone: z.string().optional(),
+  profileImage: z.string().optional(),
+  email: z.string().email().optional(),
+  departmentId: z.number().nullable().optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+});
+
 const statusSchema = z.object({
   status: z.enum(['active', 'inactive']),
+});
+
+const setPasswordSchema = z.object({
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
 const PROTECTED_ROLES: UserRole[] = ['admin', 'super_admin'];
@@ -117,8 +135,45 @@ export const usersController = {
 
   updateMe: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const data = updateSchema.parse(req.body);
-    const user = await usersService.update(req.user.userId, data);
-    return ok(res, user, 'Profile updated');
+    const data = selfUpdateSchema.parse(req.body);
+
+    // Admins (and any non-super-admin) can only update name, phone, and
+    // profile image about themselves. Strip anything else they may have sent.
+    if (req.user.role !== 'super_admin') {
+      delete data.email;
+      delete data.departmentId;
+      delete data.status;
+      delete data.designation;
+    }
+
+    try {
+      await usersService.update(req.user.userId, data);
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      if (code === 'P2002') {
+        return badRequest(res, 'That email is already in use');
+      }
+      throw err;
+    }
+
+    const fresh = await usersService.getById(req.user.userId);
+    if (!fresh) return notFound(res, 'User not found');
+
+    // Flatten the department relation so the response matches the frontend's
+    // expected BackendUser shape (`departmentName: string | null`).
+    const { department, ...rest } = fresh as typeof fresh & {
+      department?: { name: string } | null;
+    };
+    const flat = { ...rest, departmentName: department?.name ?? null };
+
+    return ok(res, flat, 'Profile updated');
+  }),
+
+  setPassword: asyncHandler(async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id, 10);
+    if (!(await ensureAdminCanTouchTarget(req, res, id))) return;
+    const { newPassword } = setPasswordSchema.parse(req.body);
+    await authService.setUserPassword(id, newPassword);
+    return ok(res, null, 'Password updated');
   }),
 };
