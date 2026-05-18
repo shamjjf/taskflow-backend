@@ -4,6 +4,8 @@ import { env } from '@/config/env';
 import { initSocketServer } from '@/sockets';
 import { prisma } from '@/config/prisma';
 import { startOverdueChecker } from '@/utils/overdueChecker';
+import { startDailyReportScheduler, stopDailyReportScheduler } from '@/utils/dailyReportScheduler';
+import { verifyTransporter } from '@/modules/mail/mail.transporter';
 
 async function main() {
   const app = createApp();
@@ -25,6 +27,12 @@ async function main() {
   const overdueInterval = startOverdueChecker(5);
   console.log('✓ Overdue task checker started (runs every 5 min)');
 
+  // Verify SMTP and schedule the daily 20:30 report email
+  verifyTransporter().then((ok) => {
+    console.log(ok ? '✓ SMTP transporter verified' : '⚠ SMTP transporter not verified — emails will fail until configured');
+  });
+  startDailyReportScheduler();
+
   httpServer.listen(env.PORT, () => {
     console.log('');
     console.log('🚀 TaskFlow API');
@@ -39,6 +47,7 @@ async function main() {
   const shutdown = async () => {
     console.log('\nShutting down gracefully...');
     clearInterval(overdueInterval);
+    stopDailyReportScheduler();
     httpServer.close(() => {
       prisma.$disconnect().then(() => process.exit(0));
     });

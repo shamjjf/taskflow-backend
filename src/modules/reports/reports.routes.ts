@@ -7,6 +7,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/', reportsController.list);
+router.post('/jobs/daily-email/run', reportsController.triggerDailyReportEmail);
 router.get('/pending-approval', reportsController.pending);
 router.get('/approved', reportsController.approvedForSuperAdmin);
 router.get('/pending-admin-approval', reportsController.pendingForSuperAdmin);
