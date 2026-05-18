@@ -237,9 +237,18 @@ model Conversation {
   createdBy             User             @relation("ConversationCreator", fields: [createdById], references: [id])
   createdAt             DateTime         @default(now()) @map("created_at")
 
+  // Canonical participant pair for `direct` conversations (both NULL for
+  // groups). Stored in ascending order — directUserAId < directUserBId — so
+  // the unique index enforces a single room per pair regardless of who
+  // initiated. Maintained by the service layer; MySQL treats NULLs as
+  // distinct in unique indexes, so group rows (NULL, NULL) coexist freely.
+  directUserAId Int? @map("direct_user_a_id")
+  directUserBId Int? @map("direct_user_b_id")
+
   participants ConversationParticipant[]
   messages     Message[]
 
+  @@unique([directUserAId, directUserBId])
   @@index([departmentId, isAutoDepartmentGroup])
   @@map("conversations")
 }

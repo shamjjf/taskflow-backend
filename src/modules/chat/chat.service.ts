@@ -108,6 +108,61 @@ export const chatService = {
     // Ensure creator is in the participants list
     const allParticipantIds = Array.from(new Set([...data.participantIds, data.createdById]));
 
+    const conversationInclude = {
+      participants: { include: { user: { select: { id: true, name: true } } } },
+    } as const;
+
+    // For direct (1:1) conversations, enforce a single room per pair of
+    // users. Pair-uniqueness is guaranteed at the DB level by a unique
+    // index on (direct_user_a_id, direct_user_b_id) — the canonical
+    // (min, max) pair. Service logic here:
+    //   1) compute the canonical pair,
+    //   2) try findUnique to short-circuit the common case,
+    //   3) attempt create, and
+    //   4) on P2002 (unique-constraint violation from a racing creator),
+    //      re-fetch and return the row the racer inserted.
+    if (data.type === 'direct') {
+      if (allParticipantIds.length !== 2) {
+        throw new Error('Direct conversations must have exactly two participants');
+      }
+      const [directUserAId, directUserBId] = [...allParticipantIds].sort((x, y) => x - y);
+      const pairWhere = {
+        directUserAId_directUserBId: { directUserAId, directUserBId },
+      };
+
+      const existing = await prisma.conversation.findUnique({
+        where: pairWhere,
+        include: conversationInclude,
+      });
+      if (existing) return existing;
+
+      try {
+        return await prisma.conversation.create({
+          data: {
+            type: data.type,
+            name: data.name,
+            departmentId: data.departmentId,
+            createdById: data.createdById,
+            directUserAId,
+            directUserBId,
+            participants: {
+              create: allParticipantIds.map((userId) => ({ userId })),
+            },
+          },
+          include: conversationInclude,
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          const raced = await prisma.conversation.findUnique({
+            where: pairWhere,
+            include: conversationInclude,
+          });
+          if (raced) return raced;
+        }
+        throw err;
+      }
+    }
+
     return prisma.conversation.create({
       data: {
         type: data.type,
@@ -118,9 +173,7 @@ export const chatService = {
           create: allParticipantIds.map((userId) => ({ userId })),
         },
       },
-      include: {
-        participants: { include: { user: { select: { id: true, name: true } } } },
-      },
+      include: conversationInclude,
     });
   },
 
