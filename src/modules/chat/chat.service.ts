@@ -1,5 +1,19 @@
 import { prisma } from '@/config/prisma';
-import { ConversationType } from '@prisma/client';
+import { ConversationType, Prisma } from '@prisma/client';
+
+export type CallEventOutcome = 'answered' | 'missed' | 'declined' | 'cancelled';
+
+export interface CallEventData {
+  callType: 'audio' | 'video';
+  outcome: CallEventOutcome;
+  callerId: number;
+  channelName: string;
+  startedAt: string;
+  endedAt: string;
+  durationSec: number;
+  isGroup: boolean;
+  participantIds: number[];
+}
 
 async function ensureParticipant(conversationId: number, userId: number) {
   const existing = await prisma.conversationParticipant.findUnique({
@@ -116,6 +130,44 @@ export const chatService = {
 
     return prisma.message.create({
       data: { conversationId, senderId, message, attachmentUrl },
+      include: {
+        sender: { select: { id: true, name: true, profileImage: true } },
+      },
+    });
+  },
+
+  /**
+   * Persist a call event as a chat message. The senderId is the caller — the
+   * UI uses callEventData.callerId to decide whether to show the entry from
+   * the caller's or the receiver's perspective (like WhatsApp).
+   *
+   * The text in `message` is a fallback label for clients that don't yet
+   * understand `messageType === 'call_event'` (older builds, conversation
+   * list previews, etc.).
+   */
+  async createCallEventMessage(conversationId: number, data: CallEventData) {
+    const label = (() => {
+      const isVideo = data.callType === 'video';
+      switch (data.outcome) {
+        case 'answered':
+          return isVideo ? 'Video call' : 'Voice call';
+        case 'missed':
+          return isVideo ? 'Missed video call' : 'Missed voice call';
+        case 'declined':
+          return isVideo ? 'Declined video call' : 'Declined voice call';
+        case 'cancelled':
+          return isVideo ? 'Cancelled video call' : 'Cancelled voice call';
+      }
+    })();
+
+    return prisma.message.create({
+      data: {
+        conversationId,
+        senderId: data.callerId,
+        message: label,
+        messageType: 'call_event',
+        callEventData: data as unknown as Prisma.InputJsonValue,
+      },
       include: {
         sender: { select: { id: true, name: true, profileImage: true } },
       },

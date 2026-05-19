@@ -17,6 +17,7 @@ router.get('/:id', usersController.get);
 router.post('/', requireAdminOrAbove, usersController.create);
 router.put('/:id', requireAdminOrAbove, usersController.update);
 router.put('/:id/status', requireAdminOrAbove, usersController.updateStatus);
+router.put('/:id/password', requireAdminOrAbove, usersController.setPassword);
 router.delete('/:id', requireAdminOrAbove, usersController.remove);
 
 export default router;

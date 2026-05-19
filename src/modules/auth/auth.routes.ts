@@ -9,6 +9,7 @@ router.post('/login', authController.login);
 router.post('/refresh-token', authController.refresh);
 router.post('/logout', requireAuth, authController.logout);
 router.get('/me', requireAuth, authController.me);
+router.post('/change-password', requireAuth, authController.changePassword);
 router.post('/register', requireAuth, requireSuperAdmin, authController.register);
 
 export default router;

@@ -13,6 +13,11 @@ const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
 const registerSchema = z.object({
   name: z.string().min(2).max(150),
   email: z.string().email(),
@@ -59,5 +64,17 @@ export const authController = {
     const data = registerSchema.parse(req.body);
     const user = await authService.register(data);
     return created(res, user, 'User registered');
+  }),
+
+  changePassword: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+    try {
+      await authService.changePassword(req.user.userId, currentPassword, newPassword);
+      return ok(res, null, 'Password updated');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to update password';
+      return badRequest(res, msg);
+    }
   }),
 };
