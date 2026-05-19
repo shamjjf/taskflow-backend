@@ -1,20 +1,20 @@
 import { env } from '@/config/env';
 import { escapeHtml } from './layout';
 
-export interface DailyReportRow {
+export interface WeeklyReportRow {
   serial: number;
   employeeName: string;
   designation: string | null;
   teamLeader: string | null;
   department: string | null;
-  date: string;
   submitted: boolean;
 }
 
-export interface DailyReportEmailData {
-  reportDate: string;
+export interface WeeklyReportEmailData {
+  weekStart: string;
+  weekEnd: string;
   recipientName?: string;
-  rows: DailyReportRow[];
+  rows: WeeklyReportRow[];
   attachmentFilename: string;
   viewReportUrl: string;
   totals: {
@@ -36,10 +36,12 @@ function statusText(submitted: boolean): string {
   return `<span style="color:${color};font-weight:600;">${label}</span>`;
 }
 
-export function renderDailyReportEmail(data: DailyReportEmailData): { html: string; text: string } {
+export function renderWeeklyReportEmail(data: WeeklyReportEmailData): { html: string; text: string } {
   const appName = escapeHtml(env.APP_NAME);
   const appUrl = escapeHtml(env.APP_URL);
-  const prettyDate = escapeHtml(formatReportDate(data.reportDate));
+  const prettyStart = escapeHtml(formatReportDate(data.weekStart));
+  const prettyEnd = escapeHtml(formatReportDate(data.weekEnd));
+  const prettyRange = `${prettyStart} – ${prettyEnd}`;
   const greetingName = data.recipientName ? escapeHtml(data.recipientName) : 'Team';
   const viewReportHref = escapeHtml(data.viewReportUrl);
   const viewReportLink = `<a href="${viewReportHref}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:underline;font-weight:600;">View Report</a>`;
@@ -65,13 +67,13 @@ export function renderDailyReportEmail(data: DailyReportEmailData): { html: stri
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Daily Employee Report — ${prettyDate}</title>
+    <title>Weekly Employee Report — ${prettyRange}</title>
   </head>
   <body style="margin:0;padding:20px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.5;">
     <p style="margin:0 0 14px;">Dear ${greetingName},</p>
 
     <p style="margin:0 0 14px;font-weight:bold;">
-      Please find the below-mentioned daily report status for the date ${prettyDate}
+      Please find the below-mentioned weekly report status for the week ${prettyRange}
     </p>
 
     <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin:0 0 16px;">
@@ -104,7 +106,7 @@ export function renderDailyReportEmail(data: DailyReportEmailData): { html: stri
     </table>
 
     <p style="margin:0 0 14px;">
-      A detailed XLSX report (<strong>${escapeHtml(data.attachmentFilename)}</strong>) is attached with each employee's full daily report data.
+      A detailed XLSX report (<strong>${escapeHtml(data.attachmentFilename)}</strong>) is attached with each employee's full weekly report data.
     </p>
 
     <p style="margin:0 0 4px;">Regards,</p>
@@ -127,7 +129,7 @@ export function renderDailyReportEmail(data: DailyReportEmailData): { html: stri
 
   const text = `Dear ${data.recipientName ?? 'Team'},
 
-Please find the below-mentioned daily report status for the date ${formatReportDate(data.reportDate)}
+Please find the below-mentioned weekly report status for the week ${formatReportDate(data.weekStart)} - ${formatReportDate(data.weekEnd)}
 
 Total Employees - ${data.totals.employees}
 Submitted - ${data.totals.submitted}

@@ -5,6 +5,8 @@ export interface MailAttachment {
   filename: string;
   content: Buffer | string;
   contentType?: string;
+  cid?: string;
+  contentDisposition?: 'attachment' | 'inline';
 }
 
 export interface SendMailOptions {
@@ -44,6 +46,8 @@ export const mailService = {
         filename: a.filename,
         content: a.content,
         contentType: a.contentType,
+        cid: a.cid,
+        contentDisposition: a.contentDisposition,
       })),
     });
 

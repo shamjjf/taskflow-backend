@@ -5,6 +5,7 @@ import { initSocketServer } from '@/sockets';
 import { prisma } from '@/config/prisma';
 import { startOverdueChecker } from '@/utils/overdueChecker';
 import { startDailyReportScheduler, stopDailyReportScheduler } from '@/utils/dailyReportScheduler';
+import { startWeeklyReportScheduler, stopWeeklyReportScheduler } from '@/utils/weeklyReportScheduler';
 import { verifyTransporter } from '@/modules/mail/mail.transporter';
 
 async function main() {
@@ -32,6 +33,7 @@ async function main() {
     console.log(ok ? '✓ SMTP transporter verified' : '⚠ SMTP transporter not verified — emails will fail until configured');
   });
   startDailyReportScheduler();
+  startWeeklyReportScheduler();
 
   httpServer.listen(env.PORT, () => {
     console.log('');
@@ -48,6 +50,7 @@ async function main() {
     console.log('\nShutting down gracefully...');
     clearInterval(overdueInterval);
     stopDailyReportScheduler();
+    stopWeeklyReportScheduler();
     httpServer.close(() => {
       prisma.$disconnect().then(() => process.exit(0));
     });

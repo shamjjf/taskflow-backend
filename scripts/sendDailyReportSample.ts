@@ -1,8 +1,10 @@
 import { prisma } from '@/config/prisma';
 import { mailService } from '@/modules/mail/mail.service';
 import { renderDailyReportEmail, DailyReportRow } from '@/modules/mail/templates/dailyReport.template';
-import { buildDailyReportXlsx, DailyReportXlsxRow } from './dailyReportXlsx';
-import { saveReportFile, buildSignedReportUrl } from './reportFiles';
+import { buildDailyReportXlsx, DailyReportXlsxRow } from '@/modules/reports/dailyReportXlsx';
+import { saveReportFile, buildSignedReportUrl } from '@/modules/reports/reportFiles';
+
+const SAMPLE_RECIPIENT = 'rohit@jjfindia.com';
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -23,45 +25,12 @@ function endOfDay(d: Date): Date {
   return x;
 }
 
-export interface DailyReportJobResult {
-  reportDate: string;
-  recipients: string[];
-  rowCount: number;
-  submittedCount: number;
-  messageId?: string;
-  skippedReason?: string;
-}
-
-/**
- * Builds and sends the daily employee report email to all admins and super_admins.
- * Idempotent — safe to invoke manually for testing.
- */
-export async function runDailyReportJob(referenceDate: Date = new Date()): Promise<DailyReportJobResult> {
+async function main() {
+  const referenceDate = new Date();
   const dayStart = startOfDay(referenceDate);
   const dayEnd = endOfDay(referenceDate);
   const reportDate = formatDate(referenceDate);
 
-  // 1. Recipients: every active admin + super_admin with an email
-  const recipientUsers = await prisma.user.findMany({
-    where: {
-      role: { in: ['admin', 'super_admin'] },
-      status: 'active',
-    },
-    select: { id: true, name: true, email: true, role: true },
-  });
-  const recipients = recipientUsers.map((u) => u.email).filter(Boolean);
-
-  if (recipients.length === 0) {
-    return {
-      reportDate,
-      recipients: [],
-      rowCount: 0,
-      submittedCount: 0,
-      skippedReason: 'No active admin / super_admin recipients found',
-    };
-  }
-
-  // 2. All active employees, with department + team leader
   const employees = await prisma.user.findMany({
     where: { role: 'employee', status: 'active' },
     include: {
@@ -76,28 +45,21 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     orderBy: [{ department: { name: 'asc' } }, { name: 'asc' }],
   });
 
-  // 3. Today's daily reports, keyed by userId
   const todaysReports = await prisma.report.findMany({
     where: {
       reportType: 'daily',
       reportDate: { gte: dayStart, lte: dayEnd },
       user: { role: 'employee' },
     },
-    include: {
-      reviewedBy: { select: { id: true, name: true } },
-    },
+    include: { reviewedBy: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'desc' },
   });
 
-  // Pick the latest report per user (already ordered desc by createdAt)
   const reportByUser = new Map<number, (typeof todaysReports)[number]>();
   for (const r of todaysReports) {
-    if (!reportByUser.has(r.userId)) {
-      reportByUser.set(r.userId, r);
-    }
+    if (!reportByUser.has(r.userId)) reportByUser.set(r.userId, r);
   }
 
-  // 4. Build table rows + xlsx rows
   const tableRows: DailyReportRow[] = [];
   const xlsxRows: DailyReportXlsxRow[] = [];
 
@@ -141,12 +103,10 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
 
   const attachmentFilename = `taskflow-daily-report-${reportDate}.xlsx`;
 
-  // 5. Build xlsx, persist to disk, and produce a signed View Report URL
   const xlsxBuffer = await buildDailyReportXlsx({ reportDate, rows: xlsxRows });
   const savedFilename = saveReportFile(attachmentFilename, xlsxBuffer);
   const viewReportUrl = buildSignedReportUrl(savedFilename);
 
-  // 6. Render html
   const { html, text } = renderDailyReportEmail({
     reportDate,
     rows: tableRows,
@@ -155,11 +115,16 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     totals,
   });
 
-  // 7. Send (BCC so recipients don't see each other)
+  console.log(`Sending sample daily report to ${SAMPLE_RECIPIENT} ...`);
+  console.log(`  Date:       ${reportDate}`);
+  console.log(`  Employees:  ${totals.employees}`);
+  console.log(`  Submitted:  ${totals.submitted}`);
+  console.log(`  Pending:    ${totals.notSubmitted}`);
+  console.log(`  View URL:   ${viewReportUrl}`);
+
   const result = await mailService.send({
-    to: recipients[0],
-    bcc: recipients.slice(1),
-    subject: `[TaskFlow] Daily Employee Report — ${reportDate}`,
+    to: SAMPLE_RECIPIENT,
+    subject: `[TaskFlow] [SAMPLE] Daily Employee Report — ${reportDate}`,
     html,
     text,
     attachments: [
@@ -171,11 +136,17 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     ],
   });
 
-  return {
-    reportDate,
-    recipients,
-    rowCount: tableRows.length,
-    submittedCount,
-    messageId: result.messageId,
-  };
+  console.log('✓ Sent.');
+  console.log(`  messageId: ${result.messageId}`);
+  console.log(`  accepted:  ${result.accepted.join(', ')}`);
+  if (result.rejected.length) console.log(`  rejected:  ${result.rejected.join(', ')}`);
 }
+
+main()
+  .catch((err) => {
+    console.error('✗ Failed to send sample daily report:', err);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

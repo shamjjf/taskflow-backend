@@ -29,10 +29,20 @@ export const env = {
   APP_URL: process.env.APP_URL || 'http://localhost:3000',
   APP_LOGO_URL: process.env.APP_LOGO_URL || '',
 
+  // Public URL of THIS backend (used in email "View Report" links).
+  // In dev: http://localhost:<port>. In prod: the public https URL.
+  API_PUBLIC_URL: process.env.API_PUBLIC_URL || `http://localhost:${parseInt(process.env.PORT || '5000', 10)}`,
+  REPORT_FILE_TTL_DAYS: parseInt(process.env.REPORT_FILE_TTL_DAYS || '30', 10),
+
   // Daily report job — cron expression (default: 20:30 every day, server TZ)
   DAILY_REPORT_CRON: process.env.DAILY_REPORT_CRON || '30 20 * * *',
   DAILY_REPORT_TIMEZONE: process.env.DAILY_REPORT_TIMEZONE || 'Asia/Kolkata',
   DAILY_REPORT_ENABLED: (process.env.DAILY_REPORT_ENABLED || 'true').toLowerCase() === 'true',
+
+  // Weekly report job — cron expression (default: 20:30 every Saturday)
+  WEEKLY_REPORT_CRON: process.env.WEEKLY_REPORT_CRON || '30 20 * * 6',
+  WEEKLY_REPORT_TIMEZONE: process.env.WEEKLY_REPORT_TIMEZONE || 'Asia/Kolkata',
+  WEEKLY_REPORT_ENABLED: (process.env.WEEKLY_REPORT_ENABLED || 'true').toLowerCase() === 'true',
 };
 
 if (!env.DATABASE_URL) {

@@ -1,7 +1,7 @@
 import { prisma } from '@/config/prisma';
 import { mailService } from '@/modules/mail/mail.service';
-import { renderDailyReportEmail, DailyReportRow } from '@/modules/mail/templates/dailyReport.template';
-import { buildDailyReportXlsx, DailyReportXlsxRow } from './dailyReportXlsx';
+import { renderWeeklyReportEmail, WeeklyReportRow } from '@/modules/mail/templates/weeklyReport.template';
+import { buildWeeklyReportXlsx, WeeklyReportXlsxRow } from './weeklyReportXlsx';
 import { saveReportFile, buildSignedReportUrl } from './reportFiles';
 
 function formatDate(d: Date): string {
@@ -23,8 +23,22 @@ function endOfDay(d: Date): Date {
   return x;
 }
 
-export interface DailyReportJobResult {
-  reportDate: string;
+/**
+ * Returns the Sunday→Saturday week boundaries that contain `referenceDate`.
+ * (When fired by the Saturday cron, that's the current week ending today.)
+ */
+function getWeekRange(referenceDate: Date): { weekStart: Date; weekEnd: Date } {
+  const day = referenceDate.getDay(); // 0 = Sunday, 6 = Saturday
+  const sunday = new Date(referenceDate);
+  sunday.setDate(referenceDate.getDate() - day);
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+  return { weekStart: startOfDay(sunday), weekEnd: endOfDay(saturday) };
+}
+
+export interface WeeklyReportJobResult {
+  weekStart: string;
+  weekEnd: string;
   recipients: string[];
   rowCount: number;
   submittedCount: number;
@@ -33,13 +47,13 @@ export interface DailyReportJobResult {
 }
 
 /**
- * Builds and sends the daily employee report email to all admins and super_admins.
- * Idempotent — safe to invoke manually for testing.
+ * Builds and sends the weekly employee report email to all admins and super_admins.
+ * Covers the Sunday→Saturday week that contains `referenceDate`.
  */
-export async function runDailyReportJob(referenceDate: Date = new Date()): Promise<DailyReportJobResult> {
-  const dayStart = startOfDay(referenceDate);
-  const dayEnd = endOfDay(referenceDate);
-  const reportDate = formatDate(referenceDate);
+export async function runWeeklyReportJob(referenceDate: Date = new Date()): Promise<WeeklyReportJobResult> {
+  const { weekStart, weekEnd } = getWeekRange(referenceDate);
+  const weekStartStr = formatDate(weekStart);
+  const weekEndStr = formatDate(weekEnd);
 
   // 1. Recipients: every active admin + super_admin with an email
   const recipientUsers = await prisma.user.findMany({
@@ -53,7 +67,8 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
 
   if (recipients.length === 0) {
     return {
-      reportDate,
+      weekStart: weekStartStr,
+      weekEnd: weekEndStr,
       recipients: [],
       rowCount: 0,
       submittedCount: 0,
@@ -76,11 +91,11 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     orderBy: [{ department: { name: 'asc' } }, { name: 'asc' }],
   });
 
-  // 3. Today's daily reports, keyed by userId
-  const todaysReports = await prisma.report.findMany({
+  // 3. This week's weekly reports, keyed by userId (latest per user)
+  const weeklyReports = await prisma.report.findMany({
     where: {
-      reportType: 'daily',
-      reportDate: { gte: dayStart, lte: dayEnd },
+      reportType: 'weekly',
+      reportDate: { gte: weekStart, lte: weekEnd },
       user: { role: 'employee' },
     },
     include: {
@@ -89,17 +104,17 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     orderBy: { createdAt: 'desc' },
   });
 
-  // Pick the latest report per user (already ordered desc by createdAt)
-  const reportByUser = new Map<number, (typeof todaysReports)[number]>();
-  for (const r of todaysReports) {
+  const reportByUser = new Map<number, (typeof weeklyReports)[number]>();
+  for (const r of weeklyReports) {
     if (!reportByUser.has(r.userId)) {
       reportByUser.set(r.userId, r);
     }
   }
 
   // 4. Build table rows + xlsx rows
-  const tableRows: DailyReportRow[] = [];
-  const xlsxRows: DailyReportXlsxRow[] = [];
+  const tableRows: WeeklyReportRow[] = [];
+  const xlsxRows: WeeklyReportXlsxRow[] = [];
+  const weekRangeLabel = `${weekStartStr} to ${weekEndStr}`;
 
   employees.forEach((emp, idx) => {
     const serial = idx + 1;
@@ -113,7 +128,6 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
       designation: emp.designation,
       teamLeader: teamLeaderName,
       department: departmentName,
-      date: reportDate,
       submitted: Boolean(report),
     });
 
@@ -123,12 +137,13 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
       designation: emp.designation,
       department: departmentName,
       teamLeader: teamLeaderName,
-      date: reportDate,
-      reportType: report?.reportType ?? null,
+      weekRange: weekRangeLabel,
+      weeklyObjective: report?.weeklyObjective ?? null,
       description: report?.description ?? null,
       approvalStatus: report ? report.approvalStatus : 'not submitted',
       reviewer: report?.reviewedBy?.name ?? null,
       reviewedAt: report?.reviewedAt ? report.reviewedAt.toISOString().slice(0, 19).replace('T', ' ') : null,
+      submittedAt: report?.createdAt ? report.createdAt.toISOString().slice(0, 19).replace('T', ' ') : null,
     });
   });
 
@@ -139,16 +154,17 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     notSubmitted: tableRows.length - submittedCount,
   };
 
-  const attachmentFilename = `taskflow-daily-report-${reportDate}.xlsx`;
+  const attachmentFilename = `taskflow-weekly-report-${weekStartStr}_to_${weekEndStr}.xlsx`;
 
   // 5. Build xlsx, persist to disk, and produce a signed View Report URL
-  const xlsxBuffer = await buildDailyReportXlsx({ reportDate, rows: xlsxRows });
+  const xlsxBuffer = await buildWeeklyReportXlsx({ weekRange: weekRangeLabel, rows: xlsxRows });
   const savedFilename = saveReportFile(attachmentFilename, xlsxBuffer);
   const viewReportUrl = buildSignedReportUrl(savedFilename);
 
   // 6. Render html
-  const { html, text } = renderDailyReportEmail({
-    reportDate,
+  const { html, text } = renderWeeklyReportEmail({
+    weekStart: weekStartStr,
+    weekEnd: weekEndStr,
     rows: tableRows,
     attachmentFilename,
     viewReportUrl,
@@ -159,7 +175,7 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
   const result = await mailService.send({
     to: recipients[0],
     bcc: recipients.slice(1),
-    subject: `[TaskFlow] Daily Employee Report — ${reportDate}`,
+    subject: `[TaskFlow] Weekly Employee Report — ${weekStartStr} to ${weekEndStr}`,
     html,
     text,
     attachments: [
@@ -172,7 +188,8 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
   });
 
   return {
-    reportDate,
+    weekStart: weekStartStr,
+    weekEnd: weekEndStr,
     recipients,
     rowCount: tableRows.length,
     submittedCount,
