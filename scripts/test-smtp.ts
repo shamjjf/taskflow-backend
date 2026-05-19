@@ -160,7 +160,6 @@ const TEMPLATES: Record<string, () => RenderedTemplate | Promise<RenderedTemplat
       teamLeader: r.teamLeader,
       date: r.date,
       reportType: r.submitted ? 'daily' : null,
-      weeklyObjective: r.submitted ? 'Sample weekly objective for testing' : null,
       description: r.submitted
         ? `Worked on ${r.department.toLowerCase()} tasks today. Made progress on assigned items and unblocked one teammate.`
         : null,

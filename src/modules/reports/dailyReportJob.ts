@@ -124,7 +124,6 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
       teamLeader: teamLeaderName,
       date: reportDate,
       reportType: report?.reportType ?? null,
-      weeklyObjective: report?.weeklyObjective ?? null,
       description: report?.description ?? null,
       approvalStatus: report ? report.approvalStatus : 'not submitted',
       reviewer: report?.reviewedBy?.name ?? null,
