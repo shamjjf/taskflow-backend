@@ -311,3 +311,27 @@ model ActivityLog {
 
   @@map("activity_logs")
 }
+
+// Extra email addresses (beyond the admin/super_admin recipient set) that
+// should receive the automated daily and weekly employee report emails.
+// Managed by Super Admin from the Settings page.
+model ReportRecipient {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.VarChar(150)
+  label     String?  @db.VarChar(150)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("report_recipients")
+}
+
+// Singleton organization settings row (id is always 1). Managed by Super
+// Admin from the Settings page → Organization card.
+model OrganizationSettings {
+  id          Int      @id @default(1)
+  companyName String   @default("") @map("company_name") @db.VarChar(150)
+  timeZone    String   @default("ist") @map("time_zone") @db.VarChar(50)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("organization_settings")
+}

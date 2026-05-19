@@ -3,6 +3,7 @@ import { mailService } from '@/modules/mail/mail.service';
 import { renderDailyReportEmail, DailyReportRow } from '@/modules/mail/templates/dailyReport.template';
 import { buildDailyReportXlsx, DailyReportXlsxRow } from './dailyReportXlsx';
 import { saveReportFile, buildSignedReportUrl } from './reportFiles';
+import { reportRecipientsService } from '@/modules/settings/reportRecipients.service';
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -41,15 +42,28 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
   const dayEnd = endOfDay(referenceDate);
   const reportDate = formatDate(referenceDate);
 
-  // 1. Recipients: every active admin + super_admin with an email
-  const recipientUsers = await prisma.user.findMany({
-    where: {
-      role: { in: ['admin', 'super_admin'] },
-      status: 'active',
-    },
-    select: { id: true, name: true, email: true, role: true },
-  });
-  const recipients = recipientUsers.map((u) => u.email).filter(Boolean);
+  // 1. Recipients: every active admin + super_admin with an email, plus any
+  //    additional addresses configured by the Super Admin from Settings.
+  const [recipientUsers, extraEmails] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        role: { in: ['admin', 'super_admin'] },
+        status: 'active',
+      },
+      select: { id: true, name: true, email: true, role: true },
+    }),
+    reportRecipientsService.listEmails(),
+  ]);
+
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const email of [...recipientUsers.map((u) => u.email), ...extraEmails]) {
+    if (!email) continue;
+    const key = email.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    recipients.push(email);
+  }
 
   if (recipients.length === 0) {
     return {
