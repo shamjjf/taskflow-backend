@@ -18,6 +18,7 @@ import activityRoutes from '@/modules/activity/activity.routes';
 import analyticsRoutes from '@/modules/analytics/analytics.routes';
 import uploadsRoutes from '@/modules/upload/uploads.routes'
 import agoraRoutes from '@/modules/agora/agora.routes';
+import settingsRoutes from '@/modules/settings/settings.routes';
 
 import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 
@@ -77,6 +78,7 @@ export function createApp(): Application {
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/uploads', uploadsRoutes);
   app.use('/api/agora', agoraRoutes);
+  app.use('/api/settings', settingsRoutes);
 
   // 404 + error handlers (must be last)
   app.use(notFoundHandler);
