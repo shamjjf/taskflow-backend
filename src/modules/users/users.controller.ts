@@ -20,6 +20,10 @@ const updateSchema = z.object({
   designation: z.string().optional(),
   phone: z.string().optional(),
   profileImage: z.string().optional(),
+  email: z.string().email().optional(),
+  role: z.enum(['super_admin', 'admin', 'team_leader', 'employee']).optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+  departmentId: z.number().nullable().optional(),
 });
 
 // Self-update schema includes additional fields that only super admins are
@@ -105,11 +109,23 @@ export const usersController = {
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     if (!(await ensureAdminCanTouchTarget(req, res, id))) return;
     const data = updateSchema.parse(req.body);
-    const user = await usersService.update(id, data);
-    return ok(res, user, 'User updated');
+    if (data.role && req.user.role !== 'super_admin' && PROTECTED_ROLES.includes(data.role)) {
+      return forbidden(res, 'Only the super admin can assign admin or super admin roles');
+    }
+    try {
+      const user = await usersService.update(id, data);
+      return ok(res, user, 'User updated');
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      if (code === 'P2002') {
+        return badRequest(res, 'That email is already in use');
+      }
+      throw err;
+    }
   }),
 
   updateStatus: asyncHandler(async (req: Request, res: Response) => {
