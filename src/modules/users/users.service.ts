@@ -122,6 +122,7 @@ export const usersService = {
       email?: string;
       departmentId?: number | null;
       status?: 'active' | 'inactive';
+      role?: UserRole;
     }
   ) {
     return prisma.user.update({
