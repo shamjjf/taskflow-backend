@@ -66,7 +66,13 @@ export const reportsController = {
       attachmentUrl: data.attachmentUrl,
       reportDate: data.reportDate,
     });
-    return created(res, report, 'Report submitted. Your Team Leader has been notified.');
+    const message =
+      req.user.role === 'team_leader'
+        ? 'Report submitted and auto-approved. Visible to Super Admin and Admin.'
+        : req.user.role === 'admin'
+        ? 'Report submitted. The Super Admin has been notified.'
+        : 'Report submitted. Your Team Leader has been notified.';
+    return created(res, report, message);
   }),
 
   pending: asyncHandler(async (req: Request, res: Response) => {

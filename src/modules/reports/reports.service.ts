@@ -106,6 +106,10 @@ export const reportsService = {
       select: { role: true },
     });
     const isAdminAuthored = author?.role === 'admin';
+    // Team leaders are the approvers for their department, so their own reports
+    // skip the TL review queue and go straight to approved (visible to Super
+    // Admin and Admin immediately).
+    const autoApprove = author?.role === 'team_leader';
 
     const report = await prisma.report.create({
       data: {
@@ -116,13 +120,16 @@ export const reportsService = {
         taskId: data.taskId,
         attachmentUrl: data.attachmentUrl,
         reportDate: data.reportDate,
-        approvalStatus: 'pending',
-        visibleToSuperAdmin: false,
+        approvalStatus: autoApprove ? 'approved' : 'pending',
+        visibleToSuperAdmin: autoApprove,
+        ...(autoApprove ? { reviewedById: data.userId, reviewedAt: new Date() } : {}),
       },
       include: reportInclude,
     });
 
-    if (isAdminAuthored) {
+    if (autoApprove) {
+      socketEvents.reportApproved(report.userId, report);
+    } else if (isAdminAuthored) {
       socketEvents.reportSubmittedToSuperAdmin(report);
     } else {
       const tlId = report.user.department?.teamLeaderId ?? null;
@@ -178,6 +185,12 @@ export const reportsService = {
       attachmentUrl?: string | null;
     }
   ) {
+    const existing = await prisma.report.findUnique({
+      where: { id },
+      select: { userId: true, user: { select: { role: true } } },
+    });
+    const autoApprove = existing?.user?.role === 'team_leader';
+
     const effectiveType = data.reportType;
     const report = await prisma.report.update({
       where: { id },
@@ -193,16 +206,18 @@ export const reportsService = {
           : {}),
         ...(data.taskId !== undefined ? { taskId: data.taskId } : {}),
         ...(data.attachmentUrl !== undefined ? { attachmentUrl: data.attachmentUrl } : {}),
-        approvalStatus: 'pending',
-        visibleToSuperAdmin: false,
-        reviewedById: null,
-        reviewedAt: null,
+        approvalStatus: autoApprove ? 'approved' : 'pending',
+        visibleToSuperAdmin: autoApprove,
+        reviewedById: autoApprove ? existing?.userId ?? null : null,
+        reviewedAt: autoApprove ? new Date() : null,
         reviewComment: null,
       },
       include: reportInclude,
     });
 
-    if (report.user.role === 'admin') {
+    if (autoApprove) {
+      socketEvents.reportApproved(report.userId, report);
+    } else if (report.user.role === 'admin') {
       socketEvents.reportSubmittedToSuperAdmin(report);
     } else {
       const tlId = report.user.department?.teamLeaderId ?? null;
