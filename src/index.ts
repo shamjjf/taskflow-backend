@@ -25,13 +25,15 @@ async function main() {
     process.exit(1);
   }
 
-  // Bootstrap a super admin if none exists
+  // Bootstrap a super admin if none exists (only when explicit env vars are set)
   try {
     const result = await ensureSuperAdmin();
     if (result.created) {
       console.log(`✓ Super admin bootstrapped: ${result.email}`);
-    } else {
+    } else if (result.reason === 'already_exists') {
       console.log('✓ Super admin already exists');
+    } else {
+      console.warn(`⚠  Super admin not bootstrapped: ${result.message}`);
     }
   } catch (err) {
     console.error('✗ Super admin bootstrap failed:', err);

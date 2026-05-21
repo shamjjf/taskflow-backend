@@ -6,8 +6,8 @@ export const env = {
   PORT: parseInt(process.env.PORT || '5000', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
   DATABASE_URL: process.env.DATABASE_URL || '',
-  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'change-me',
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'change-me-too',
+  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || '',
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || '',
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   CORS_ORIGINS: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001').split(','),
@@ -47,6 +47,17 @@ export const env = {
 
 if (!env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set in .env');
+}
+
+if (!env.JWT_ACCESS_SECRET || !env.JWT_REFRESH_SECRET) {
+  throw new Error(
+    'JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be set in .env. ' +
+      'Generate strong random values, e.g. `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`'
+  );
+}
+
+if (env.JWT_ACCESS_SECRET.length < 32 || env.JWT_REFRESH_SECRET.length < 32) {
+  throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be at least 32 characters long.');
 }
 
 if (!env.AGORA_APP_ID || !env.AGORA_APP_CERTIFICATE) {
