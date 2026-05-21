@@ -1,7 +1,7 @@
 import { prisma } from '@/config/prisma';
 import { hashPassword } from '@/utils/password';
 
-6/**
+/**
  * Bootstrap a super-admin user on first startup, but ONLY if explicit
  * credentials have been provided via env vars. We deliberately do not ship
  * a default password — auto-bootstrapping with a hardcoded credential
