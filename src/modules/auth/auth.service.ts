@@ -2,6 +2,7 @@ import { prisma } from '@/config/prisma';
 import { hashPassword, comparePassword } from '@/utils/password';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '@/utils/jwt';
 import { UserRole } from '@prisma/client';
+import { socketEvents } from '@/sockets';
 
 export const authService = {
   async login(email: string, password: string) {
@@ -143,7 +144,7 @@ export const authService = {
   }) {
     const passwordHash = await hashPassword(data.password);
 
-    return prisma.user.create({
+    const user = await prisma.user.create({
       data: {
         name: data.name,
         email: data.email,
@@ -160,5 +161,16 @@ export const authService = {
         departmentId: true,
       },
     });
+
+    try {
+      socketEvents.userCreated(
+        { id: user.id, departmentId: user.departmentId },
+        user
+      );
+    } catch (err) {
+      console.error('Failed to emit user:created socket event:', err);
+    }
+
+    return user;
   },
 };
