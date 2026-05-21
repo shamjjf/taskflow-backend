@@ -7,6 +7,7 @@ import { startOverdueChecker } from '@/utils/overdueChecker';
 import { startDailyReportScheduler, stopDailyReportScheduler } from '@/utils/dailyReportScheduler';
 import { startWeeklyReportScheduler, stopWeeklyReportScheduler } from '@/utils/weeklyReportScheduler';
 import { verifyTransporter } from '@/modules/mail/mail.transporter';
+import { ensureSuperAdmin } from '@/utils/superAdminSeeder';
 
 async function main() {
   const app = createApp();
@@ -22,6 +23,20 @@ async function main() {
   } catch (err) {
     console.error('✗ Database connection failed:', err);
     process.exit(1);
+  }
+
+  // Bootstrap a super admin if none exists (only when explicit env vars are set)
+  try {
+    const result = await ensureSuperAdmin();
+    if (result.created) {
+      console.log(`✓ Super admin bootstrapped: ${result.email}`);
+    } else if (result.reason === 'already_exists') {
+      console.log('✓ Super admin already exists');
+    } else {
+      console.warn(`⚠  Super admin not bootstrapped: ${result.message}`);
+    }
+  } catch (err) {
+    console.error('✗ Super admin bootstrap failed:', err);
   }
 
   // Start overdue task checker (runs every 5 minutes)

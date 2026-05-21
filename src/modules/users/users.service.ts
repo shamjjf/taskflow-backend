@@ -2,6 +2,7 @@ import { prisma } from '@/config/prisma';
 import { UserRole } from '@prisma/client';
 import { hashPassword } from '@/utils/password';
 import { chatService } from '../chat/chat.service';
+import { socketEvents } from '@/sockets';
 
 export interface UsersFilters {
   departmentId?: number;
@@ -107,6 +108,17 @@ export const usersService = {
       } catch (err) {
         console.error('Failed to add new user to department group chat:', err);
       }
+    }
+
+    // Broadcast so the new user appears in team lists & admin user tables
+    // without a manual refresh.
+    try {
+      socketEvents.userCreated(
+        { id: user.id, departmentId: user.departmentId },
+        user
+      );
+    } catch (err) {
+      console.error('Failed to emit user:created socket event:', err);
     }
 
     return user;

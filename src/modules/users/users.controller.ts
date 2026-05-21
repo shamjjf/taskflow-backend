@@ -103,6 +103,14 @@ export const usersController = {
     if (req.user.role !== 'super_admin' && PROTECTED_ROLES.includes(data.role)) {
       return forbidden(res, 'Only the super admin can create admin or super admin users');
     }
+    if (req.user.role === 'team_leader') {
+      if (data.role !== 'employee') {
+        return forbidden(res, 'Team leaders can only add employees');
+      }
+      if (!req.user.departmentId || data.departmentId !== req.user.departmentId) {
+        return forbidden(res, 'Team leaders can only add users to their own department');
+      }
+    }
     const payload = data.role === 'admin' ? { ...data, departmentId: undefined } : data;
     const user = await usersService.create(payload);
     return created(res, user, 'User created');

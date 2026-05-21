@@ -148,6 +148,17 @@ export const socketEvents = {
     getIO().to(`user:${userId}`).emit('notification:new', notification);
   },
 
+  // User directory events — broadcast so team panels & admin user lists
+  // refresh without a manual page reload.
+  userCreated(user: { id: number; departmentId: number | null }, fullUser: unknown) {
+    const payload = { user: fullUser };
+    if (user.departmentId) {
+      getIO().to(`dept:${user.departmentId}`).emit('user:created', payload);
+    }
+    getIO().to('role:super_admin').emit('user:created', payload);
+    getIO().to('role:admin').emit('user:created', payload);
+  },
+
   // ============ CALL EVENTS (Agora signaling) ============
 
   /** Ring receivers - they should show incoming call popup with ringtone */
