@@ -73,6 +73,21 @@ export const departmentsService = {
   async update(id: number, data: { name?: string; description?: string; teamLeaderId?: number }) {
     const department = await prisma.department.update({ where: { id }, data });
 
+    // When the team leader changes, also pin the new TL's User.departmentId
+    // to this dept and bump them to role 'team_leader'. Without this, the TL
+    // can be assigned to a dept without belonging to it, which then makes
+    // their "My Team" list empty (it queries by user.departmentId).
+    if (data.teamLeaderId !== undefined && data.teamLeaderId !== null) {
+      try {
+        await prisma.user.update({
+          where: { id: data.teamLeaderId },
+          data: { departmentId: id, role: 'team_leader' },
+        });
+      } catch (err) {
+        console.error('Error syncing new team leader\'s departmentId:', err);
+      }
+    }
+
     // If team leader was updated and group chat exists, update members
     if (data.teamLeaderId !== undefined) {
       try {
