@@ -57,7 +57,7 @@ export const chatController = {
     // Only team leaders and admins can create group chats; direct chats are
     // open to everyone (no per-participant department restriction).
     if (req.user.role === 'employee' && data.type === 'group') {
-      return forbidden(res, 'Only team leaders or admins can create group chats');
+      return forbidden(res, 'Only team leaders or Sub-Admins can create group chats');
     }
 
     const conv = await chatService.createConversation({

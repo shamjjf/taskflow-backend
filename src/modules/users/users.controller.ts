@@ -66,7 +66,7 @@ async function ensureAdminCanTouchTarget(
     return false;
   }
   if (PROTECTED_ROLES.includes(target.role)) {
-    forbidden(res, 'Admins cannot view or modify other admins or the super admin');
+    forbidden(res, 'Sub-Admins cannot view or modify other Sub-Admins or the Super Admin');
     return false;
   }
   return true;
@@ -92,7 +92,7 @@ async function ensureCanTouchTarget(
   if (req.user.role === 'super_admin') return target;
   if (req.user.role === 'admin') {
     if (PROTECTED_ROLES.includes(target.role)) {
-      forbidden(res, 'Admins cannot modify other admins or the super admin');
+      forbidden(res, 'Sub-Admins cannot modify other Sub-Admins or the Super Admin');
       return null;
     }
     return target;
@@ -133,7 +133,7 @@ export const usersController = {
     const user = await usersService.getById(id);
     if (!user) return notFound(res, 'User not found');
     if (req.user.role === 'admin' && PROTECTED_ROLES.includes(user.role) && user.id !== req.user.userId) {
-      return forbidden(res, 'Admins cannot view other admins or the super admin');
+      return forbidden(res, 'Sub-Admins cannot view other Sub-Admins or the Super Admin');
     }
     return ok(res, user);
   }),
@@ -142,7 +142,7 @@ export const usersController = {
     if (!req.user) return unauthorized(res);
     const data = createSchema.parse(req.body);
     if (req.user.role !== 'super_admin' && PROTECTED_ROLES.includes(data.role)) {
-      return forbidden(res, 'Only the super admin can create admin or super admin users');
+      return forbidden(res, 'Only the Super Admin can create Sub-Admin or Super Admin users');
     }
     if (req.user.role === 'team_leader') {
       if (data.role !== 'employee') {
@@ -163,7 +163,7 @@ export const usersController = {
     if (!target || !req.user) return;
     const data = updateSchema.parse(req.body);
     if (data.role && req.user.role !== 'super_admin' && PROTECTED_ROLES.includes(data.role)) {
-      return forbidden(res, 'Only the super admin can assign admin or super admin roles');
+      return forbidden(res, 'Only the Super Admin can assign Sub-Admin or Super Admin roles');
     }
     // Team leaders cannot change a member's role or move them between departments.
     if (req.user.role === 'team_leader') {

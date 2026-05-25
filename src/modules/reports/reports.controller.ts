@@ -96,7 +96,7 @@ export const reportsController = {
   pendingForSuperAdmin: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
     if (req.user.role !== 'super_admin') {
-      return forbidden(res, 'Only Super Admin can view pending admin reports');
+      return forbidden(res, 'Only Super Admin can view pending Sub-Admin reports');
     }
     const reports = await reportsService.getPendingForSuperAdmin();
     return ok(res, reports);
@@ -105,7 +105,7 @@ export const reportsController = {
   allAdminReports: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
     if (req.user.role !== 'super_admin') {
-      return forbidden(res, 'Only Super Admin can view admin reports history');
+      return forbidden(res, 'Only Super Admin can view Sub-Admin reports history');
     }
     const reports = await reportsService.getAllAdminReports();
     return ok(res, reports);
@@ -121,7 +121,7 @@ export const reportsController = {
     const isAdminAuthored = report.user.role === 'admin';
     if (isAdminAuthored) {
       if (req.user.role !== 'super_admin') {
-        return forbidden(res, 'Only the Super Admin can approve admin reports');
+        return forbidden(res, 'Only the Super Admin can approve Sub-Admin reports');
       }
     } else {
       if (req.user.role !== 'team_leader') {
@@ -143,7 +143,7 @@ export const reportsController = {
     const isAdminAuthored = report.user.role === 'admin';
     if (isAdminAuthored) {
       if (req.user.role !== 'super_admin') {
-        return forbidden(res, 'Only the Super Admin can reject admin reports');
+        return forbidden(res, 'Only the Super Admin can reject Sub-Admin reports');
       }
     } else {
       if (req.user.role !== 'team_leader') {
