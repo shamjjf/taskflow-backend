@@ -16,10 +16,12 @@ router.get('/:id', usersController.get);
 // Create: Team Leaders can add employees to their own department; Admin and
 // Super Admin can create any user (controller enforces these constraints).
 router.post('/', requireTLOrAbove, usersController.create);
-// Admin and Super Admin (controller enforces role restrictions on targets)
-router.put('/:id', requireAdminOrAbove, usersController.update);
-router.put('/:id/status', requireAdminOrAbove, usersController.updateStatus);
-router.put('/:id/password', requireAdminOrAbove, usersController.setPassword);
+// Update / status / password: Team Leaders can edit employees in their own
+// department; Admin/Super Admin have broader scope (controller enforces it).
+router.put('/:id', requireTLOrAbove, usersController.update);
+router.put('/:id/status', requireTLOrAbove, usersController.updateStatus);
+router.put('/:id/password', requireTLOrAbove, usersController.setPassword);
+// Delete remains admin-only.
 router.delete('/:id', requireAdminOrAbove, usersController.remove);
 
 export default router;

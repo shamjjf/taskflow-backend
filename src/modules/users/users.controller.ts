@@ -72,6 +72,46 @@ async function ensureAdminCanTouchTarget(
   return true;
 }
 
+// Like ensureAdminCanTouchTarget but also lets a team leader manage employees
+// of their own department. The target user is returned so the caller can use
+// it without re-fetching.
+async function ensureCanTouchTarget(
+  req: Request,
+  res: Response,
+  targetId: number
+): Promise<Awaited<ReturnType<typeof usersService.getById>> | null> {
+  if (!req.user) {
+    unauthorized(res);
+    return null;
+  }
+  const target = await usersService.getById(targetId);
+  if (!target) {
+    notFound(res, 'User not found');
+    return null;
+  }
+  if (req.user.role === 'super_admin') return target;
+  if (req.user.role === 'admin') {
+    if (PROTECTED_ROLES.includes(target.role)) {
+      forbidden(res, 'Admins cannot modify other admins or the super admin');
+      return null;
+    }
+    return target;
+  }
+  if (req.user.role === 'team_leader') {
+    if (target.role !== 'employee') {
+      forbidden(res, 'Team leaders can only modify employees');
+      return null;
+    }
+    if (!req.user.departmentId || target.departmentId !== req.user.departmentId) {
+      forbidden(res, 'Team leaders can only modify members of their own department');
+      return null;
+    }
+    return target;
+  }
+  forbidden(res, 'Not authorized');
+  return null;
+}
+
 export const usersController = {
   list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
@@ -118,12 +158,23 @@ export const usersController = {
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
-    if (!(await ensureAdminCanTouchTarget(req, res, id))) return;
+    const target = await ensureCanTouchTarget(req, res, id);
+    if (!target || !req.user) return;
     const data = updateSchema.parse(req.body);
     if (data.role && req.user.role !== 'super_admin' && PROTECTED_ROLES.includes(data.role)) {
       return forbidden(res, 'Only the super admin can assign admin or super admin roles');
+    }
+    // Team leaders cannot change a member's role or move them between departments.
+    if (req.user.role === 'team_leader') {
+      if (data.role !== undefined && data.role !== target.role) {
+        return forbidden(res, 'Team leaders cannot change a member\'s role');
+      }
+      if (data.departmentId !== undefined && data.departmentId !== target.departmentId) {
+        return forbidden(res, 'Team leaders cannot move members to a different department');
+      }
+      delete data.role;
+      delete data.departmentId;
     }
     try {
       const user = await usersService.update(id, data);
@@ -139,7 +190,7 @@ export const usersController = {
 
   updateStatus: asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
-    if (!(await ensureAdminCanTouchTarget(req, res, id))) return;
+    if (!(await ensureCanTouchTarget(req, res, id))) return;
     const { status } = statusSchema.parse(req.body);
     const user = await usersService.updateStatus(id, status);
     return ok(res, user, 'User status updated');
@@ -208,7 +259,7 @@ export const usersController = {
 
   setPassword: asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
-    if (!(await ensureAdminCanTouchTarget(req, res, id))) return;
+    if (!(await ensureCanTouchTarget(req, res, id))) return;
     const { newPassword } = setPasswordSchema.parse(req.body);
     await authService.setUserPassword(id, newPassword);
     return ok(res, null, 'Password updated');
