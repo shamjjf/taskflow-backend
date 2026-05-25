@@ -235,12 +235,9 @@ export const usersController = {
     const fresh = await usersService.getById(req.user.userId);
     if (!fresh) return notFound(res, 'User not found');
 
-    // Flatten the department relation so the response matches the frontend's
-    // expected BackendUser shape (`departmentName: string | null`).
-    const { department, ...rest } = fresh as typeof fresh & {
-      department?: { name: string } | null;
-    };
-    const flat = { ...rest, departmentName: department?.name ?? null };
+    // getById already returns the flat `departmentName` shape the frontend
+    // expects, so no further normalization is needed here.
+    const flat = fresh;
 
     // Broadcast so every other client showing this user's avatar/name
     // (team lists, chat, task cards, admin user table) updates without a

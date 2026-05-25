@@ -35,7 +35,7 @@ export const usersService = {
       where.role = filters.role;
     }
 
-    return prisma.user.findMany({
+    const users = await prisma.user.findMany({
       where,
       select: {
         id: true,
@@ -52,10 +52,17 @@ export const usersService = {
       },
       orderBy: { name: 'asc' },
     });
+    // Flatten { department: { name } } -> { departmentName } so the response
+    // matches the shape the frontends expect (the auth/login endpoint
+    // already returns it this way).
+    return users.map(({ department, ...u }) => ({
+      ...u,
+      departmentName: department?.name ?? null,
+    }));
   },
 
   async getById(id: number) {
-    return prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
@@ -72,6 +79,9 @@ export const usersService = {
         createdAt: true,
       },
     });
+    if (!user) return null;
+    const { department, ...rest } = user;
+    return { ...rest, departmentName: department?.name ?? null };
   },
 
   async create(data: {
