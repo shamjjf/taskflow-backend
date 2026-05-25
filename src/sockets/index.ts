@@ -159,6 +159,19 @@ export const socketEvents = {
     getIO().to('role:admin').emit('user:created', payload);
   },
 
+  // Emitted when a user updates their own profile (name, phone, photo, etc.)
+  // so every other client showing their avatar/name picks up the change.
+  userUpdated(user: { id: number; departmentId: number | null }, fullUser: unknown) {
+    const payload = { user: fullUser };
+    // The user themselves (covers multi-tab / other devices)
+    getIO().to(`user:${user.id}`).emit('user:profileUpdated', payload);
+    if (user.departmentId) {
+      getIO().to(`dept:${user.departmentId}`).emit('user:profileUpdated', payload);
+    }
+    getIO().to('role:super_admin').emit('user:profileUpdated', payload);
+    getIO().to('role:admin').emit('user:profileUpdated', payload);
+  },
+
   // ============ CALL EVENTS (Agora signaling) ============
 
   /** Ring receivers - they should show incoming call popup with ringtone */

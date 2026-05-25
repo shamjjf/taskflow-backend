@@ -5,6 +5,7 @@ import { authService } from '../auth/auth.service';
 import { ok, created, notFound, unauthorized, forbidden, badRequest } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { UserRole } from '@prisma/client';
+import { socketEvents } from '@/sockets';
 
 const createSchema = z.object({
   name: z.string().min(2),
@@ -189,6 +190,18 @@ export const usersController = {
       department?: { name: string } | null;
     };
     const flat = { ...rest, departmentName: department?.name ?? null };
+
+    // Broadcast so every other client showing this user's avatar/name
+    // (team lists, chat, task cards, admin user table) updates without a
+    // page refresh.
+    try {
+      socketEvents.userUpdated(
+        { id: flat.id, departmentId: flat.departmentId },
+        flat
+      );
+    } catch (err) {
+      console.error('Failed to emit user:profileUpdated socket event:', err);
+    }
 
     return ok(res, flat, 'Profile updated');
   }),
