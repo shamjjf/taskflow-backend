@@ -82,8 +82,27 @@ export const tasksController = {
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
+    const existing = await tasksService.getById(id);
+    if (!existing) return notFound(res, 'Task not found');
+
+    // Team leaders can only modify tasks that belong to their own department.
+    // Admin and super_admin keep their existing broader scope (the route
+    // middleware already filters out anyone below team_leader).
+    if (req.user.role === 'team_leader' && existing.departmentId !== req.user.departmentId) {
+      return forbidden(res, 'Team leaders can only edit tasks in their own department');
+    }
+
     const data = updateSchema.parse(req.body);
+
+    // Don't let anyone (other than super_admin) silently mutate a completed
+    // task's deadline or fields — once a task is closed it shouldn't be
+    // touched without explicit re-opening.
+    if (existing.status === 'completed' && req.user.role !== 'super_admin') {
+      return forbidden(res, 'This task is already completed and cannot be edited');
+    }
+
     const task = await tasksService.update(id, data);
     return ok(res, task, 'Task updated');
   }),
