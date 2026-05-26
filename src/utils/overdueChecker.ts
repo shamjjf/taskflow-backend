@@ -3,14 +3,21 @@ import { notificationsService } from '@/modules/notifications/notifications.serv
 
 /**
  * Checks for tasks past their deadline and:
- * 1. Updates their status to 'overdue' (if not already completed)
+ * 1. Flips status to 'overdue' for tasks the assignees haven't started yet
+ *    (status === 'assigned'). Tasks already in progress keep their
+ *    in_progress status — otherwise an active worker would see their task
+ *    silently demoted back to "To Do" 5 minutes later, masking the work.
+ *    The deadline-passed state is still shown visually via the
+ *    "X days overdue" deadline label on the frontend.
  * 2. Sends a notification to the Team Leader of the department
  * 3. Sends a notification to each assignee
  */
 export async function checkOverdueTasks(): Promise<void> {
   const now = new Date();
 
-  // Find all tasks whose deadline has passed and are still active (not completed)
+  // Find all tasks whose deadline has passed and are still active (not in
+  // review and not completed). We notify for both assigned and in_progress
+  // but only the assigned ones get their status flipped.
   const overdueTasks = await prisma.task.findMany({
     where: {
       deadline: { lt: now },
@@ -27,11 +34,13 @@ export async function checkOverdueTasks(): Promise<void> {
   console.log(`[Overdue Check] Found ${overdueTasks.length} overdue task(s) at ${now.toISOString()}`);
 
   for (const task of overdueTasks) {
-    // 1. Update status to overdue
-    await prisma.task.update({
-      where: { id: task.id },
-      data: { status: 'overdue' },
-    });
+    // 1. Flip to 'overdue' only when the task is still 'assigned'.
+    if (task.status === 'assigned') {
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { status: 'overdue' },
+      });
+    }
 
     // 2. Notify Team Leader (if exists and not already notified for this overdue event)
     if (task.department.teamLeader) {

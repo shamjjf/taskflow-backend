@@ -26,7 +26,6 @@ export function createApp(): Application {
   const app = express();
 
 
-
   // Security + parsing
   app.use(
     helmet({
