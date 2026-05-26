@@ -8,8 +8,12 @@ export const env = {
   DATABASE_URL: process.env.DATABASE_URL || '',
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || '',
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || '',
-  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+  // Long-lived tokens so users stay signed in until they explicitly log out.
+  // The frontend transparently refreshes the access token on 401, so the
+  // only practical reason a user gets bounced to the login screen is if the
+  // refresh window also lapses (i.e. they didn't open the app for 90 days).
+  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '7d',
+  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '90d',
   CORS_ORIGINS: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001').split(','),
 
   // Agora video/audio call credentials
