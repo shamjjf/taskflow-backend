@@ -69,9 +69,20 @@ export const authService = {
       departmentId: user.departmentId,
     };
 
+    const newAccessToken = signAccessToken(newPayload);
+    const newRefreshToken = signRefreshToken(newPayload);
+
+    // Persist the rotated refresh token. Without this, the second refresh
+    // call would compare the freshly-issued token against the original one
+    // still stored in the DB and bounce the user to /login mid-session.
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: newRefreshToken },
+    });
+
     return {
-      accessToken: signAccessToken(newPayload),
-      refreshToken: signRefreshToken(newPayload),
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
     };
   },
 
