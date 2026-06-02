@@ -217,9 +217,12 @@ export const tasksService = {
     });
     if (!task) throw new Error('Task not found');
 
-    const isAssigned = task.assignees.some((a) => a.userId === requester.userId);
-    const isTeamLeader = requester.role === 'team_leader' && requester.departmentId === task.departmentId;
-    if (!isAssigned && !isTeamLeader) throw new Error('You are not assigned to this task or not the team leader of this department');
+    const isTeamLeaderOfDept =
+      requester.role === 'team_leader' && requester.departmentId === task.departmentId;
+    const isAdminOrAbove = requester.role === 'admin' || requester.role === 'super_admin';
+    if (!isTeamLeaderOfDept && !isAdminOrAbove) {
+      throw new Error('Only the team leader of this department can approve this task');
+    }
 
     if (task.status === 'completed') {
       throw new Error('Task is already completed');
