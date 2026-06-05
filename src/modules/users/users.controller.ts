@@ -132,8 +132,26 @@ export const usersController = {
     const id = parseInt(req.params.id, 10);
     const user = await usersService.getById(id);
     if (!user) return notFound(res, 'User not found');
-    if (req.user.role === 'admin' && PROTECTED_ROLES.includes(user.role) && user.id !== req.user.userId) {
-      return forbidden(res, 'Sub-Admins cannot view other Sub-Admins or the Super Admin');
+
+    // Always allow self.
+    if (user.id === req.user.userId) return ok(res, user);
+
+    if (req.user.role === 'super_admin') return ok(res, user);
+
+    if (req.user.role === 'admin') {
+      if (PROTECTED_ROLES.includes(user.role)) {
+        return forbidden(res, 'Sub-Admins cannot view other Sub-Admins or the Super Admin');
+      }
+      return ok(res, user);
+    }
+
+    // team_leader / employee: only members of their own department, and
+    // never an admin / super_admin profile.
+    if (PROTECTED_ROLES.includes(user.role)) {
+      return forbidden(res, 'Not authorized to view this user');
+    }
+    if (!req.user.departmentId || user.departmentId !== req.user.departmentId) {
+      return forbidden(res, 'Not authorized to view this user');
     }
     return ok(res, user);
   }),

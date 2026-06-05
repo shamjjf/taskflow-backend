@@ -1,9 +1,20 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { departmentsService } from './departments.service';
-import { ok, created, notFound, forbidden } from '@/utils/response';
+import { ok, created, notFound, forbidden, badRequest } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { departmentGroupChatSeeder } from '@/utils/departmentGroupChatSeeder';
+
+function handleTeamLeaderError(res: Response, err: unknown): Response | null {
+  const msg = (err as Error)?.message || '';
+  if (msg.includes('Admins and the Super Admin cannot be assigned')) {
+    return forbidden(res, msg);
+  }
+  if (msg.includes('Selected team leader user not found')) {
+    return badRequest(res, msg);
+  }
+  return null;
+}
 
 const createSchema = z.object({
   name: z.string().min(2).max(100),
@@ -32,15 +43,27 @@ export const departmentsController = {
 
   create: asyncHandler(async (req: Request, res: Response) => {
     const data = createSchema.parse(req.body);
-    const dept = await departmentsService.create(data);
-    return created(res, dept, 'Department created');
+    try {
+      const dept = await departmentsService.create(data);
+      return created(res, dept, 'Department created');
+    } catch (err) {
+      const handled = handleTeamLeaderError(res, err);
+      if (handled) return handled;
+      throw err;
+    }
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     const data = updateSchema.parse(req.body);
-    const dept = await departmentsService.update(id, data);
-    return ok(res, dept, 'Department updated');
+    try {
+      const dept = await departmentsService.update(id, data);
+      return ok(res, dept, 'Department updated');
+    } catch (err) {
+      const handled = handleTeamLeaderError(res, err);
+      if (handled) return handled;
+      throw err;
+    }
   }),
 
   remove: asyncHandler(async (req: Request, res: Response) => {
@@ -52,8 +75,14 @@ export const departmentsController = {
   assignLeader: asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     const { teamLeaderId } = assignLeaderSchema.parse(req.body);
-    const dept = await departmentsService.assignLeader(id, teamLeaderId);
-    return ok(res, dept, 'Team leader assigned');
+    try {
+      const dept = await departmentsService.assignLeader(id, teamLeaderId);
+      return ok(res, dept, 'Team leader assigned');
+    } catch (err) {
+      const handled = handleTeamLeaderError(res, err);
+      if (handled) return handled;
+      throw err;
+    }
   }),
 
   members: asyncHandler(async (req: Request, res: Response) => {

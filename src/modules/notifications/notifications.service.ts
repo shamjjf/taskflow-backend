@@ -1,5 +1,17 @@
 import { prisma } from '@/config/prisma';
 import { NotificationType, ReferenceType } from '@prisma/client';
+import { socketEvents } from '@/sockets';
+
+// Push the notification over Socket.IO so the recipient's bell updates
+// in real time. Wrapped in try/catch because socket isn't critical and
+// must not break the DB write that already succeeded.
+function pushSocket(userId: number, notification: unknown) {
+  try {
+    socketEvents.newNotification(userId, notification);
+  } catch (err) {
+    console.error('Failed to emit notification:new socket event:', err);
+  }
+}
 
 export const notificationsService = {
   async list(userId: number) {
@@ -18,7 +30,9 @@ export const notificationsService = {
     referenceType?: ReferenceType;
     referenceId?: number;
   }) {
-    return prisma.notification.create({ data });
+    const notification = await prisma.notification.create({ data });
+    pushSocket(data.userId, notification);
+    return notification;
   },
 
   async createMany(
@@ -31,24 +45,38 @@ export const notificationsService = {
       referenceId?: number;
     }[]
   ) {
-    return prisma.notification.createMany({ data: items });
+    const result = await prisma.notification.createMany({ data: items });
+    // createMany doesn't return rows; emit a lightweight payload so the
+    // client knows to refetch.
+    items.forEach((item) => pushSocket(item.userId, item));
+    return result;
   },
 
-  async createForAdmins(payload: {
-    type: NotificationType;
-    title: string;
-    message: string;
-    referenceType?: ReferenceType;
-    referenceId?: number;
-  }) {
+  async createForAdmins(
+    payload: {
+      type: NotificationType;
+      title: string;
+      message: string;
+      referenceType?: ReferenceType;
+      referenceId?: number;
+    },
+    options?: { excludeUserId?: number }
+  ) {
+    // Admin AND super_admin both get "admin-tier" notifications. The
+    // previous filter only matched `admin` which left the Super Admin out
+    // of every task event feed.
     const admins = await prisma.user.findMany({
-      where: { role: 'admin' },
+      where: { role: { in: ['admin', 'super_admin'] } },
       select: { id: true },
     });
-    if (admins.length === 0) return;
+    const recipients = options?.excludeUserId
+      ? admins.filter((a) => a.id !== options.excludeUserId)
+      : admins;
+    if (recipients.length === 0) return;
     await prisma.notification.createMany({
-      data: admins.map((a) => ({ userId: a.id, ...payload })),
+      data: recipients.map((a) => ({ userId: a.id, ...payload })),
     });
+    recipients.forEach((a) => pushSocket(a.id, payload));
   },
 
   async markRead(id: number, userId: number) {

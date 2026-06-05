@@ -3,7 +3,20 @@ import { z } from 'zod';
 import { tasksService } from './tasks.service';
 import { ok, created, notFound, unauthorized, badRequest, forbidden } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
-import { TaskPriority, TaskStatus } from '@prisma/client';
+import { TaskPriority, TaskStatus, UserRole } from '@prisma/client';
+
+// A task is visible / interactable to the caller if they are an assignee,
+// the team leader of its department, or admin/super_admin. Used by GET,
+// comment, and attachment endpoints to stop cross-department info leaks.
+function canAccessTask(
+  task: { departmentId: number; assignees: Array<{ userId: number }> },
+  user: { userId: number; role: UserRole; departmentId: number | null }
+): boolean {
+  if (user.role === 'super_admin' || user.role === 'admin') return true;
+  if (task.assignees.some((a) => a.userId === user.userId)) return true;
+  if (user.role === 'team_leader' && user.departmentId === task.departmentId) return true;
+  return false;
+}
 
 const createSchema = z.object({
   title: z.string().min(2),
@@ -14,6 +27,9 @@ const createSchema = z.object({
   assigneeIds: z.array(z.number()).min(1),
 });
 
+// `status` is intentionally NOT part of the update schema: status changes
+// MUST go through the dedicated /start, /review, /complete, /reject endpoints
+// so the state machine, notifications, and sockets stay consistent.
 const updateSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
@@ -22,7 +38,6 @@ const updateSchema = z.object({
     .string()
     .transform((s) => new Date(s))
     .optional(),
-  status: z.enum(['assigned', 'in_progress', 'completed', 'overdue']).optional(),
 });
 
 const commentSchema = z.object({
@@ -61,9 +76,13 @@ export const tasksController = {
   }),
 
   get: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     const task = await tasksService.getById(id);
     if (!task) return notFound(res, 'Task not found');
+    if (!canAccessTask(task, req.user)) {
+      return forbidden(res, 'Not authorized to view this task');
+    }
     return ok(res, task);
   }),
 
@@ -153,13 +172,26 @@ export const tasksController = {
   }),
 
   remove: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
+    const existing = await tasksService.getById(id);
+    if (!existing) return notFound(res, 'Task not found');
+    // A team leader can only delete tasks inside their own department.
+    if (req.user.role === 'team_leader' && existing.departmentId !== req.user.departmentId) {
+      return forbidden(res, 'Team leaders can only delete tasks in their own department');
+    }
     await tasksService.delete(id);
     return ok(res, null, 'Task deleted');
   }),
 
   listComments: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const taskId = parseInt(req.params.id, 10);
+    const task = await tasksService.getById(taskId);
+    if (!task) return notFound(res, 'Task not found');
+    if (!canAccessTask(task, req.user)) {
+      return forbidden(res, 'Not authorized to view comments on this task');
+    }
     const comments = await tasksService.getComments(taskId);
     return ok(res, comments);
   }),
@@ -167,6 +199,11 @@ export const tasksController = {
   addComment: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
     const taskId = parseInt(req.params.id, 10);
+    const task = await tasksService.getById(taskId);
+    if (!task) return notFound(res, 'Task not found');
+    if (!canAccessTask(task, req.user)) {
+      return forbidden(res, 'Not authorized to comment on this task');
+    }
     const { message, attachmentUrl } = commentSchema.parse(req.body);
     const comment = await tasksService.addComment(taskId, req.user.userId, message, attachmentUrl);
     return created(res, comment, 'Comment added');
@@ -175,6 +212,11 @@ export const tasksController = {
   addAttachment: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
     const taskId = parseInt(req.params.id, 10);
+    const task = await tasksService.getById(taskId);
+    if (!task) return notFound(res, 'Task not found');
+    if (!canAccessTask(task, req.user)) {
+      return forbidden(res, 'Not authorized to add attachments to this task');
+    }
     const data = attachmentSchema.parse(req.body);
     const attachment = await tasksService.addAttachment(taskId, req.user.userId, data);
     return created(res, attachment, 'Attachment added');

@@ -1,6 +1,23 @@
 import { prisma } from '@/config/prisma';
 import { chatService } from '../chat/chat.service';
 
+// Users with these roles must never be silently demoted to `team_leader`
+// (or moved into a department) by the department endpoints. Without this
+// guard a Sub-Admin could lock out the Super Admin by assigning them as a
+// dept's team leader.
+async function assertCanBecomeTeamLeader(userId: number) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+  if (!user) {
+    throw new Error('Selected team leader user not found');
+  }
+  if (user.role === 'super_admin' || user.role === 'admin') {
+    throw new Error('Admins and the Super Admin cannot be assigned as a team leader');
+  }
+}
+
 export const departmentsService = {
   async list() {
     const departments = await prisma.department.findMany({
@@ -49,6 +66,9 @@ export const departmentsService = {
   },
 
   async create(data: { name: string; description?: string; teamLeaderId?: number }) {
+    if (data.teamLeaderId !== undefined) {
+      await assertCanBecomeTeamLeader(data.teamLeaderId);
+    }
     const department = await prisma.department.create({ data });
 
     // Get super admin to create the group chat
@@ -71,6 +91,9 @@ export const departmentsService = {
   },
 
   async update(id: number, data: { name?: string; description?: string; teamLeaderId?: number }) {
+    if (data.teamLeaderId !== undefined && data.teamLeaderId !== null) {
+      await assertCanBecomeTeamLeader(data.teamLeaderId);
+    }
     const department = await prisma.department.update({ where: { id }, data });
 
     // When the team leader changes, also pin the new TL's User.departmentId
@@ -114,6 +137,7 @@ export const departmentsService = {
   },
 
   async assignLeader(id: number, teamLeaderId: number) {
+    await assertCanBecomeTeamLeader(teamLeaderId);
     // Update the user to be team_leader
     await prisma.user.update({
       where: { id: teamLeaderId },

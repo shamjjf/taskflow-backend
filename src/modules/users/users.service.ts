@@ -31,6 +31,14 @@ export const usersService = {
       } else {
         where.role = { notIn: ['admin', 'super_admin'] };
       }
+    } else if (requester.role === 'team_leader' || requester.role === 'employee') {
+      // Non-admin roles can only see members of their own department, and
+      // they cannot see admins / the super admin even within that dept.
+      if (!requester.departmentId) {
+        return [];
+      }
+      where.departmentId = requester.departmentId;
+      where.role = { notIn: ['admin', 'super_admin'] };
     } else if (filters.role) {
       where.role = filters.role;
     }
@@ -147,9 +155,23 @@ export const usersService = {
       role?: UserRole;
     }
   ) {
+    // Any change that affects the user's authorization context (role, dept,
+    // or being deactivated) must invalidate their existing sessions so the
+    // stale JWT cannot keep granting the old privileges. The access token
+    // carries role + departmentId, so without this an admin demoted to
+    // employee keeps admin scope until the access token expires.
+    const securityImpactingChange =
+      data.role !== undefined ||
+      data.departmentId !== undefined ||
+      data.status === 'inactive';
+
+    const updatePayload = securityImpactingChange
+      ? { ...data, refreshToken: null }
+      : data;
+
     return prisma.user.update({
       where: { id },
-      data,
+      data: updatePayload,
       select: {
         id: true,
         name: true,
@@ -170,7 +192,9 @@ export const usersService = {
   async updateStatus(id: number, status: 'active' | 'inactive') {
     return prisma.user.update({
       where: { id },
-      data: { status },
+      // Deactivating must also kill the user's refresh token so they
+      // cannot mint a new access token after being disabled.
+      data: status === 'inactive' ? { status, refreshToken: null } : { status },
       select: { id: true, status: true },
     });
   },

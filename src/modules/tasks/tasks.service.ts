@@ -109,20 +109,30 @@ export const tasksService = {
       include: taskInclude,
     });
 
-    // Notify each assignee about the new task
+    // Notify each assignee about the new task (auto-emits socket via service)
     await Promise.all(
       input.assigneeIds.map((userId) =>
-        prisma.notification.create({
-          data: {
-            userId,
-            type: 'task_assigned',
-            title: 'New task assigned',
-            message: `You have been assigned "${task.title}". Deadline: ${task.deadline.toLocaleString()}`,
-            referenceType: 'task',
-            referenceId: task.id,
-          },
+        notificationsService.create({
+          userId,
+          type: 'task_assigned',
+          title: 'New task assigned',
+          message: `You have been assigned "${task.title}". Deadline: ${task.deadline.toLocaleString()}`,
+          referenceType: 'task',
+          referenceId: task.id,
         })
       )
+    );
+
+    // Mirror to admin tier so they see new task activity in their bell.
+    await notificationsService.createForAdmins(
+      {
+        type: 'task_assigned',
+        title: 'New task assigned',
+        message: `"${task.title}" was assigned in ${task.department?.name || 'a department'}`,
+        referenceType: 'task',
+        referenceId: task.id,
+      },
+      { excludeUserId: createdById }
     );
 
     socketEvents.taskAssigned(input.assigneeIds, task.departmentId, task);
@@ -160,8 +170,11 @@ export const tasksService = {
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');
 
-    if (task.status === 'completed') {
-      throw new Error('Task is already completed');
+    // Whitelist source states: a task can only be (re)started from a state
+    // where work hasn't begun or has stalled. Allowing /start from `in_review`
+    // would silently regress a task out of the team leader's review queue.
+    if (task.status !== 'assigned' && task.status !== 'overdue') {
+      throw new Error('Task can only be started from the assigned or overdue state');
     }
 
     const updated = await prisma.task.update({
@@ -176,26 +189,27 @@ export const tasksService = {
     // Notify Team Leader that the task has started
     const starter = await prisma.user.findUnique({ where: { id: userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: task.department.teamLeader.id,
-          type: 'task_started',
-          title: 'Task started',
-          message: `${starter?.name || 'A team member'} started working on "${task.title}"`,
-          referenceType: 'task',
-          referenceId: task.id,
-        },
+      await notificationsService.create({
+        userId: task.department.teamLeader.id,
+        type: 'task_started',
+        title: 'Task started',
+        message: `${starter?.name || 'A team member'} started working on "${task.title}"`,
+        referenceType: 'task',
+        referenceId: task.id,
       });
     }
 
-    // Mirror to all admins (department-wide visibility)
-    await notificationsService.createForAdmins({
-      type: 'task_started',
-      title: 'Task started',
-      message: `${starter?.name || 'A team member'} started working on "${task.title}" in ${task.department.name}`,
-      referenceType: 'task',
-      referenceId: task.id,
-    });
+    // Mirror to admin tier (excluding the requester themselves)
+    await notificationsService.createForAdmins(
+      {
+        type: 'task_started',
+        title: 'Task started',
+        message: `${starter?.name || 'A team member'} started working on "${task.title}" in ${task.department.name}`,
+        referenceType: 'task',
+        referenceId: task.id,
+      },
+      { excludeUserId: userId }
+    );
 
     socketEvents.taskStarted(
       updated.id,
@@ -240,26 +254,27 @@ export const tasksService = {
     // Notify Team Leader that the task is complete
     const finisher = await prisma.user.findUnique({ where: { id: requester.userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== requester.userId) {
-      await prisma.notification.create({
-        data: {
-          userId: task.department.teamLeader.id,
-          type: 'task_completed',
-          title: 'Task completed',
-          message: `${finisher?.name || 'A team member'} completed "${task.title}"`,
-          referenceType: 'task',
-          referenceId: task.id,
-        },
+      await notificationsService.create({
+        userId: task.department.teamLeader.id,
+        type: 'task_completed',
+        title: 'Task completed',
+        message: `${finisher?.name || 'A team member'} completed "${task.title}"`,
+        referenceType: 'task',
+        referenceId: task.id,
       });
     }
 
-    // Mirror to all admins (department-wide visibility)
-    await notificationsService.createForAdmins({
-      type: 'task_completed',
-      title: 'Task completed',
-      message: `${finisher?.name || 'A team member'} completed "${task.title}" in ${task.department.name}`,
-      referenceType: 'task',
-      referenceId: task.id,
-    });
+    // Mirror to admin tier (excluding the approver themselves)
+    await notificationsService.createForAdmins(
+      {
+        type: 'task_completed',
+        title: 'Task completed',
+        message: `${finisher?.name || 'A team member'} completed "${task.title}" in ${task.department.name}`,
+        referenceType: 'task',
+        referenceId: task.id,
+      },
+      { excludeUserId: requester.userId }
+    );
 
     socketEvents.taskCompleted(
       updated.id,
@@ -287,7 +302,8 @@ export const tasksService = {
 
     const isTeamLeaderOfDept =
       requester.role === 'team_leader' && requester.departmentId === task.departmentId;
-    if (!isTeamLeaderOfDept && requester.role !== 'super_admin') {
+    const isAdminOrAbove = requester.role === 'admin' || requester.role === 'super_admin';
+    if (!isTeamLeaderOfDept && !isAdminOrAbove) {
       throw new Error('Only the team leader of this department can reject this task');
     }
 
@@ -314,17 +330,27 @@ export const tasksService = {
 
     await Promise.all(
       task.assignees.map((a) =>
-        prisma.notification.create({
-          data: {
-            userId: a.userId,
-            type: 'task_review',
-            title: 'Task sent back',
-            message: `"${task.title}" was sent back: ${reason}`,
-            referenceType: 'task',
-            referenceId: task.id,
-          },
+        notificationsService.create({
+          userId: a.userId,
+          type: 'task_review',
+          title: 'Task sent back',
+          message: `"${task.title}" was sent back: ${reason}`,
+          referenceType: 'task',
+          referenceId: task.id,
         })
       )
+    );
+
+    // Also mirror to admin tier so they see review activity in their bell.
+    await notificationsService.createForAdmins(
+      {
+        type: 'task_review',
+        title: 'Task sent back',
+        message: `"${task.title}" was sent back in ${task.department.name}: ${reason}`,
+        referenceType: 'task',
+        referenceId: task.id,
+      },
+      { excludeUserId: requester.userId }
     );
 
     socketEvents.taskRejected(
@@ -351,15 +377,21 @@ export const tasksService = {
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');
 
-    if (task.status === 'completed') {
-      throw new Error('Task is already completed');
+    // Only an in-progress (or overdue, since the user is finishing late) task
+    // can be submitted for review. Without this guard an `assigned` task could
+    // jump straight to `in_review` without ever being started, and an already
+    // submitted task could be re-submitted, firing duplicate notifications.
+    if (task.status !== 'in_progress' && task.status !== 'overdue') {
+      throw new Error('Only in-progress tasks can be submitted for review');
     }
 
     const updated = await prisma.task.update({
       where: { id },
+      // Don't stamp completedAt here — the task is only submitted, not
+      // approved. completedAt is reserved for the final TL approval so
+      // analytics/reports filtering by completedAt remain meaningful.
       data: {
         status: 'in_review',
-        completedAt: new Date(),
       },
       include: taskInclude,
     });
@@ -367,26 +399,27 @@ export const tasksService = {
     // Notify Team Leader that the task is ready for review
     const submitter = await prisma.user.findUnique({ where: { id: userId } });
     if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: task.department.teamLeader.id,
-          type: 'task_review',
-          title: 'Task submitted for review',
-          message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review`,
-          referenceType: 'task',
-          referenceId: task.id,
-        },
+      await notificationsService.create({
+        userId: task.department.teamLeader.id,
+        type: 'task_review',
+        title: 'Task submitted for review',
+        message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review`,
+        referenceType: 'task',
+        referenceId: task.id,
       });
     }
 
-    // Mirror to all admins (department-wide visibility)
-    await notificationsService.createForAdmins({
-      type: 'task_review',
-      title: 'Task submitted for review',
-      message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review in ${task.department.name}`,
-      referenceType: 'task',
-      referenceId: task.id,
-    });
+    // Mirror to admin tier (excluding the submitter)
+    await notificationsService.createForAdmins(
+      {
+        type: 'task_review',
+        title: 'Task submitted for review',
+        message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review in ${task.department.name}`,
+        referenceType: 'task',
+        referenceId: task.id,
+      },
+      { excludeUserId: userId }
+    );
 
     socketEvents.taskReviewed(
       updated.id,
