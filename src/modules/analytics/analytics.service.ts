@@ -31,16 +31,19 @@ function creatorFilter(requesterRole?: UserRole) {
 }
 
 export const analyticsService = {
-  async dashboard(period?: string, requesterRole?: UserRole) {
+  async dashboard(organizationId: number, period?: string, requesterRole?: UserRole) {
     const start = periodStart(period);
     const dateFilter = start ? { createdAt: { gte: start } } : {};
     const scope = creatorFilter(requesterRole);
+    // Every count is fenced by organizationId so dashboard tiles never mix
+    // numbers from another tenant.
+    const base = { organizationId, ...dateFilter, ...scope };
 
     const [total, inProgress, completed, overdue] = await Promise.all([
-      prisma.task.count({ where: { ...dateFilter, ...scope } }),
-      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'in_progress' } }),
-      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'completed' } }),
-      prisma.task.count({ where: { ...dateFilter, ...scope, status: 'overdue' } }),
+      prisma.task.count({ where: base }),
+      prisma.task.count({ where: { ...base, status: 'in_progress' } }),
+      prisma.task.count({ where: { ...base, status: 'completed' } }),
+      prisma.task.count({ where: { ...base, status: 'overdue' } }),
     ]);
 
     return {
@@ -51,12 +54,13 @@ export const analyticsService = {
     };
   },
 
-  async tasksByDepartment(period?: string, requesterRole?: UserRole) {
+  async tasksByDepartment(organizationId: number, period?: string, requesterRole?: UserRole) {
     const start = periodStart(period);
     const dateFilter = start ? { createdAt: { gte: start } } : {};
     const scope = creatorFilter(requesterRole);
 
     const depts = await prisma.department.findMany({
+      where: { organizationId },
       include: {
         _count: {
           select: {
@@ -70,10 +74,22 @@ export const analyticsService = {
       depts.map(async (d) => ({
         label: d.name,
         completed: await prisma.task.count({
-          where: { ...dateFilter, ...scope, departmentId: d.id, status: 'completed' },
+          where: {
+            organizationId,
+            ...dateFilter,
+            ...scope,
+            departmentId: d.id,
+            status: 'completed',
+          },
         }),
         inProgress: await prisma.task.count({
-          where: { ...dateFilter, ...scope, departmentId: d.id, status: 'in_progress' },
+          where: {
+            organizationId,
+            ...dateFilter,
+            ...scope,
+            departmentId: d.id,
+            status: 'in_progress',
+          },
         }),
       }))
     );
@@ -81,12 +97,12 @@ export const analyticsService = {
     return results;
   },
 
-  async topPerformers(limit = 5, period?: string) {
+  async topPerformers(organizationId: number, limit = 5, period?: string) {
     const start = periodStart(period);
     const taskWhere = start ? { task: { createdAt: { gte: start } } } : {};
 
     const users = await prisma.user.findMany({
-      where: { role: 'employee' },
+      where: { role: 'employee', organizationId },
       include: {
         department: { select: { name: true } },
         taskAssignees: {

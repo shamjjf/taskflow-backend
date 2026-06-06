@@ -21,15 +21,21 @@ export function startWeeklyReportScheduler(): ScheduledTask | null {
       const startedAt = new Date();
       console.log(`[WeeklyReport] Job started at ${startedAt.toISOString()}`);
       try {
+        // Per-org job: log a one-liner per organization so multi-tenant
+        // runs are auditable without scanning the whole payload.
         const result = await runWeeklyReportJob();
-        if (result.skippedReason) {
-          console.warn(`[WeeklyReport] Skipped: ${result.skippedReason}`);
-        } else {
-          console.log(
-            `[WeeklyReport] Sent to ${result.recipients.length} recipient(s) — ` +
-              `${result.submittedCount}/${result.rowCount} employees submitted for ` +
-              `${result.weekStart} to ${result.weekEnd}. messageId=${result.messageId}`
-          );
+        for (const org of result.perOrg) {
+          if (org.skippedReason) {
+            console.warn(
+              `[WeeklyReport] org=${org.organizationSlug} skipped: ${org.skippedReason}`
+            );
+          } else {
+            console.log(
+              `[WeeklyReport] org=${org.organizationSlug} sent to ${org.recipients.length} ` +
+                `recipient(s) — ${org.submittedCount}/${org.rowCount} employees submitted ` +
+                `for ${org.weekStart} to ${org.weekEnd}. messageId=${org.messageId}`
+            );
+          }
         }
       } catch (err) {
         console.error('[WeeklyReport] Job failed:', err);

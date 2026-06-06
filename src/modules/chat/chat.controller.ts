@@ -42,7 +42,10 @@ async function canManageGroup(
 export const chatController = {
   listConversations: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const convs = await chatService.listConversations(req.user.userId);
+    const convs = await chatService.listConversations(
+      req.user.userId,
+      req.user.organizationId
+    );
     return ok(res, convs);
   }),
 
@@ -60,18 +63,27 @@ export const chatController = {
       return forbidden(res, 'Only team leaders or Sub-Admins can create group chats');
     }
 
-    const conv = await chatService.createConversation({
-      ...data,
-      createdById: req.user.userId,
-    });
-    return created(res, conv, 'Conversation created');
+    try {
+      const conv = await chatService.createConversation({
+        ...data,
+        createdById: req.user.userId,
+        organizationId: req.user.organizationId,
+      });
+      return created(res, conv, 'Conversation created');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
   }),
 
   getMessages: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
     const conversationId = parseInt(req.params.id, 10);
     try {
-      const messages = await chatService.getMessages(conversationId, req.user.userId);
+      const messages = await chatService.getMessages(
+        conversationId,
+        req.user.userId,
+        req.user.organizationId
+      );
       return ok(res, messages);
     } catch (err) {
       return forbidden(res, (err as Error).message);

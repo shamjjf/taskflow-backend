@@ -21,15 +21,21 @@ export function startDailyReportScheduler(): ScheduledTask | null {
       const startedAt = new Date();
       console.log(`[DailyReport] Job started at ${startedAt.toISOString()}`);
       try {
+        // Per-org job: log a one-liner per organization so multi-tenant
+        // runs are auditable without scanning the whole payload.
         const result = await runDailyReportJob();
-        if (result.skippedReason) {
-          console.warn(`[DailyReport] Skipped: ${result.skippedReason}`);
-        } else {
-          console.log(
-            `[DailyReport] Sent to ${result.recipients.length} recipient(s) — ` +
-              `${result.submittedCount}/${result.rowCount} employees submitted. ` +
-              `messageId=${result.messageId}`
-          );
+        for (const org of result.perOrg) {
+          if (org.skippedReason) {
+            console.warn(
+              `[DailyReport] org=${org.organizationSlug} skipped: ${org.skippedReason}`
+            );
+          } else {
+            console.log(
+              `[DailyReport] org=${org.organizationSlug} sent to ${org.recipients.length} ` +
+                `recipient(s) — ${org.submittedCount}/${org.rowCount} employees submitted. ` +
+                `messageId=${org.messageId}`
+            );
+          }
         }
       } catch (err) {
         console.error('[DailyReport] Job failed:', err);

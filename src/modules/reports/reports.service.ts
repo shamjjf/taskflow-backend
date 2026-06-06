@@ -17,10 +17,17 @@ const reportInclude = {
 
 export const reportsService = {
   async list(
-    requester: { userId: number; role: UserRole; departmentId: number | null },
+    requester: {
+      userId: number;
+      role: UserRole;
+      departmentId: number | null;
+      organizationId: number;
+    },
     options: { scope?: 'mine' | 'all' } = {}
   ) {
-    const where: Record<string, unknown> = {};
+    // Multi-tenancy: every report list is fenced by the caller's org so
+    // a Super Admin in JJF can't see 1xl reports even via this endpoint.
+    const where: Record<string, unknown> = { organizationId: requester.organizationId };
 
     if (options.scope === 'mine') {
       where.userId = requester.userId;
@@ -44,9 +51,10 @@ export const reportsService = {
     });
   },
 
-  async getPendingForTL(teamLeaderDeptId: number) {
+  async getPendingForTL(teamLeaderDeptId: number, organizationId: number) {
     return prisma.report.findMany({
       where: {
+        organizationId,
         approvalStatus: 'pending',
         user: { departmentId: teamLeaderDeptId, role: { notIn: ['admin', 'super_admin'] } },
       },
@@ -55,9 +63,10 @@ export const reportsService = {
     });
   },
 
-  async getPendingForSuperAdmin() {
+  async getPendingForSuperAdmin(organizationId: number) {
     return prisma.report.findMany({
       where: {
+        organizationId,
         approvalStatus: 'pending',
         user: { role: 'admin' },
       },
@@ -66,17 +75,18 @@ export const reportsService = {
     });
   },
 
-  async getAllAdminReports() {
+  async getAllAdminReports(organizationId: number) {
     return prisma.report.findMany({
-      where: { user: { role: 'admin' } },
+      where: { organizationId, user: { role: 'admin' } },
       include: reportInclude,
       orderBy: { createdAt: 'desc' },
     });
   },
 
-  async getApprovedForSuperAdmin() {
+  async getApprovedForSuperAdmin(organizationId: number) {
     return prisma.report.findMany({
       where: {
+        organizationId,
         approvalStatus: 'approved',
         visibleToSuperAdmin: true,
       },
@@ -86,6 +96,9 @@ export const reportsService = {
   },
 
   async getById(id: number) {
+    // Callers must additionally enforce organization match using the
+    // organizationId returned in reportInclude.user (or the report's own
+    // organizationId column).
     return prisma.report.findUnique({
       where: { id },
       include: reportInclude,
@@ -100,19 +113,26 @@ export const reportsService = {
     taskId?: number;
     attachmentUrl?: string;
     reportDate: Date;
+    organizationId: number;
   }) {
     const author = await prisma.user.findUnique({
       where: { id: data.userId },
-      select: { role: true },
+      select: { role: true, organizationId: true },
     });
-    const isAdminAuthored = author?.role === 'admin';
+    if (!author || author.organizationId !== data.organizationId) {
+      // Defense in depth: never let a Super Admin in org A file a report
+      // on behalf of a user in org B.
+      throw new Error('Author does not belong to this organization');
+    }
+    const isAdminAuthored = author.role === 'admin';
     // Team leaders are the approvers for their department, so their own reports
     // skip the TL review queue and go straight to approved (visible to Super
     // Admin and Admin immediately).
-    const autoApprove = author?.role === 'team_leader';
+    const autoApprove = author.role === 'team_leader';
 
     const report = await prisma.report.create({
       data: {
+        organizationId: data.organizationId,
         userId: data.userId,
         reportType: data.reportType,
         weeklyObjective: data.reportType === 'weekly' ? data.weeklyObjective : null,

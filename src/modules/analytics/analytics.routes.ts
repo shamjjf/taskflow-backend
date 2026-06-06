@@ -14,7 +14,11 @@ router.get(
   asyncHandler(async (req, res) => {
     if (!req.user) return unauthorized(res);
     const period = req.query.period as string | undefined;
-    const stats = await analyticsService.dashboard(period, req.user.role);
+    const stats = await analyticsService.dashboard(
+      req.user.organizationId,
+      period,
+      req.user.role
+    );
     return ok(res, stats);
   })
 );
@@ -24,7 +28,11 @@ router.get(
   asyncHandler(async (req, res) => {
     if (!req.user) return unauthorized(res);
     const period = req.query.period as string | undefined;
-    const data = await analyticsService.tasksByDepartment(period, req.user.role);
+    const data = await analyticsService.tasksByDepartment(
+      req.user.organizationId,
+      period,
+      req.user.role
+    );
     return ok(res, data);
   })
 );
@@ -32,9 +40,14 @@ router.get(
 router.get(
   '/top-performers',
   asyncHandler(async (req, res) => {
+    if (!req.user) return unauthorized(res);
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 5;
     const period = req.query.period as string | undefined;
-    const performers = await analyticsService.topPerformers(limit, period);
+    const performers = await analyticsService.topPerformers(
+      req.user.organizationId,
+      limit,
+      period
+    );
     return ok(res, performers);
   })
 );

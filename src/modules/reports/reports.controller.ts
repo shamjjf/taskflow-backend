@@ -41,6 +41,7 @@ export const reportsController = {
         userId: req.user.userId,
         role: req.user.role,
         departmentId: req.user.departmentId,
+        organizationId: req.user.organizationId,
       },
       { scope }
     );
@@ -48,9 +49,15 @@ export const reportsController = {
   }),
 
   get: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     const report = await reportsService.getById(id);
     if (!report) return notFound(res, 'Report not found');
+    // Multi-tenant fence — 404 (not 403) so attackers can't probe ids
+    // across orgs.
+    if (report.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Report not found');
+    }
     return ok(res, report);
   }),
 
@@ -59,6 +66,7 @@ export const reportsController = {
     const data = createSchema.parse(req.body);
     const report = await reportsService.create({
       userId: req.user.userId,
+      organizationId: req.user.organizationId,
       reportType: data.reportType,
       weeklyObjective: data.reportType === 'weekly' ? data.weeklyObjective : undefined,
       description: data.description,
@@ -80,7 +88,10 @@ export const reportsController = {
     if (req.user.role !== 'team_leader' || !req.user.departmentId) {
       return forbidden(res, 'Only Team Leaders can view pending approvals');
     }
-    const reports = await reportsService.getPendingForTL(req.user.departmentId);
+    const reports = await reportsService.getPendingForTL(
+      req.user.departmentId,
+      req.user.organizationId
+    );
     return ok(res, reports);
   }),
 
@@ -89,7 +100,7 @@ export const reportsController = {
     if (req.user.role !== 'super_admin') {
       return forbidden(res);
     }
-    const reports = await reportsService.getApprovedForSuperAdmin();
+    const reports = await reportsService.getApprovedForSuperAdmin(req.user.organizationId);
     return ok(res, reports);
   }),
 
@@ -98,7 +109,7 @@ export const reportsController = {
     if (req.user.role !== 'super_admin') {
       return forbidden(res, 'Only Super Admin can view pending Sub-Admin reports');
     }
-    const reports = await reportsService.getPendingForSuperAdmin();
+    const reports = await reportsService.getPendingForSuperAdmin(req.user.organizationId);
     return ok(res, reports);
   }),
 
@@ -107,7 +118,7 @@ export const reportsController = {
     if (req.user.role !== 'super_admin') {
       return forbidden(res, 'Only Super Admin can view Sub-Admin reports history');
     }
-    const reports = await reportsService.getAllAdminReports();
+    const reports = await reportsService.getAllAdminReports(req.user.organizationId);
     return ok(res, reports);
   }),
 
@@ -117,6 +128,9 @@ export const reportsController = {
 
     const report = await reportsService.getById(id);
     if (!report) return notFound(res, 'Report not found');
+    if (report.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Report not found');
+    }
 
     const isAdminAuthored = report.user.role === 'admin';
     if (isAdminAuthored) {
@@ -139,6 +153,9 @@ export const reportsController = {
 
     const report = await reportsService.getById(id);
     if (!report) return notFound(res, 'Report not found');
+    if (report.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Report not found');
+    }
 
     const isAdminAuthored = report.user.role === 'admin';
     if (isAdminAuthored) {
@@ -206,6 +223,9 @@ export const reportsController = {
 
     const existing = await reportsService.getById(id);
     if (!existing) return notFound(res, 'Report not found');
+    if (existing.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Report not found');
+    }
 
     if (existing.userId !== req.user.userId) {
       return forbidden(res, 'You can only resubmit your own reports');

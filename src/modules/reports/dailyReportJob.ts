@@ -24,7 +24,10 @@ function endOfDay(d: Date): Date {
   return x;
 }
 
-export interface DailyReportJobResult {
+export interface DailyReportJobOrgResult {
+  organizationId: number;
+  organizationSlug: string;
+  organizationName: string;
   reportDate: string;
   recipients: string[];
   rowCount: number;
@@ -33,26 +36,38 @@ export interface DailyReportJobResult {
   skippedReason?: string;
 }
 
+export interface DailyReportJobResult {
+  reportDate: string;
+  perOrg: DailyReportJobOrgResult[];
+}
+
 /**
- * Builds and sends the daily employee report email to all admins and super_admins.
- * Idempotent — safe to invoke manually for testing.
+ * Builds and sends the daily employee report email for ONE organization.
+ * Each org gets its own email with its own subject, recipients, and data —
+ * so a JJF admin never sees 1xl employees and vice versa.
  */
-export async function runDailyReportJob(referenceDate: Date = new Date()): Promise<DailyReportJobResult> {
+async function runForOrganization(
+  org: { id: number; slug: string; name: string },
+  referenceDate: Date
+): Promise<DailyReportJobOrgResult> {
+  const organizationId = org.id;
   const dayStart = startOfDay(referenceDate);
   const dayEnd = endOfDay(referenceDate);
   const reportDate = formatDate(referenceDate);
 
-  // 1. Recipients: every active admin + super_admin with an email, plus any
-  //    additional addresses configured by the Super Admin from Settings.
+  // 1. Recipients: every active admin + super_admin of this org with an
+  //    email, plus any additional addresses configured for this org from
+  //    Settings. Each org has its own recipient list.
   const [recipientUsers, extraEmails] = await Promise.all([
     prisma.user.findMany({
       where: {
+        organizationId,
         role: { in: ['admin', 'super_admin'] },
         status: 'active',
       },
       select: { id: true, name: true, email: true, role: true },
     }),
-    reportRecipientsService.listEmails(),
+    reportRecipientsService.listEmails(organizationId),
   ]);
 
   const seen = new Set<string>();
@@ -67,17 +82,20 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
 
   if (recipients.length === 0) {
     return {
+      organizationId,
+      organizationSlug: org.slug,
+      organizationName: org.name,
       reportDate,
       recipients: [],
       rowCount: 0,
       submittedCount: 0,
-      skippedReason: 'No active admin / super_admin recipients found',
+      skippedReason: 'No active admin / super_admin recipients found for this organization',
     };
   }
 
-  // 2. All active employees, with department + team leader
+  // 2. All active employees in this org, with department + team leader
   const employees = await prisma.user.findMany({
-    where: { role: 'employee', status: 'active' },
+    where: { organizationId, role: 'employee', status: 'active' },
     include: {
       department: {
         select: {
@@ -90,9 +108,10 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     orderBy: [{ department: { name: 'asc' } }, { name: 'asc' }],
   });
 
-  // 3. Today's daily reports, keyed by userId
+  // 3. Today's daily reports for this org, keyed by userId
   const todaysReports = await prisma.report.findMany({
     where: {
+      organizationId,
       reportType: 'daily',
       reportDate: { gte: dayStart, lte: dayEnd },
       user: { role: 'employee' },
@@ -153,7 +172,10 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     notSubmitted: tableRows.length - submittedCount,
   };
 
-  const attachmentFilename = `taskflow-daily-report-${reportDate}.xlsx`;
+  // Filename + subject are namespaced by org slug so concurrent runs for
+  // different orgs don't overwrite each other on disk and don't share
+  // subject lines in recipients' inboxes.
+  const attachmentFilename = `taskflow-${org.slug}-daily-report-${reportDate}.xlsx`;
 
   // 5. Build xlsx, persist to disk, and produce a signed View Report URL
   const xlsxBuffer = await buildDailyReportXlsx({ reportDate, rows: xlsxRows });
@@ -169,11 +191,12 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
     totals,
   });
 
-  // 7. Send (BCC so recipients don't see each other)
+  // 7. Send (BCC so recipients don't see each other). Subject carries the
+  // org's display name so the recipient knows which tenant this is for.
   const result = await mailService.send({
     to: recipients[0],
     bcc: recipients.slice(1),
-    subject: `[TaskFlow] Daily Employee Report — ${reportDate}`,
+    subject: `[${org.name}] Daily Employee Report — ${reportDate}`,
     html,
     text,
     attachments: [
@@ -186,10 +209,53 @@ export async function runDailyReportJob(referenceDate: Date = new Date()): Promi
   });
 
   return {
+    organizationId,
+    organizationSlug: org.slug,
+    organizationName: org.name,
     reportDate,
     recipients,
     rowCount: tableRows.length,
     submittedCount,
     messageId: result.messageId,
+  };
+}
+
+/**
+ * Runs the daily report job across every active organization. Each org
+ * receives its own email with its own data — there is no cross-org mixing.
+ * Idempotent — safe to invoke manually for testing.
+ */
+export async function runDailyReportJob(
+  referenceDate: Date = new Date()
+): Promise<DailyReportJobResult> {
+  const orgs = await prisma.organization.findMany({
+    where: { status: 'active' },
+    select: { id: true, slug: true, name: true },
+  });
+
+  const perOrg: DailyReportJobOrgResult[] = [];
+  for (const org of orgs) {
+    try {
+      const result = await runForOrganization(org, referenceDate);
+      perOrg.push(result);
+    } catch (err) {
+      // Don't let one org's failure cancel the others — log and continue.
+      console.error(`[dailyReportJob] org=${org.slug} failed:`, err);
+      perOrg.push({
+        organizationId: org.id,
+        organizationSlug: org.slug,
+        organizationName: org.name,
+        reportDate: formatDate(referenceDate),
+        recipients: [],
+        rowCount: 0,
+        submittedCount: 0,
+        skippedReason: `Job failed: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  return {
+    reportDate: formatDate(referenceDate),
+    perOrg,
   };
 }

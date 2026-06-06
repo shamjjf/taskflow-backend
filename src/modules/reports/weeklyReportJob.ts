@@ -37,7 +37,10 @@ function getWeekRange(referenceDate: Date): { weekStart: Date; weekEnd: Date } {
   return { weekStart: startOfDay(sunday), weekEnd: endOfDay(saturday) };
 }
 
-export interface WeeklyReportJobResult {
+export interface WeeklyReportJobOrgResult {
+  organizationId: number;
+  organizationSlug: string;
+  organizationName: string;
   weekStart: string;
   weekEnd: string;
   recipients: string[];
@@ -47,26 +50,37 @@ export interface WeeklyReportJobResult {
   skippedReason?: string;
 }
 
+export interface WeeklyReportJobResult {
+  weekStart: string;
+  weekEnd: string;
+  perOrg: WeeklyReportJobOrgResult[];
+}
+
 /**
- * Builds and sends the weekly employee report email to all admins and super_admins.
- * Covers the Sunday→Saturday week that contains `referenceDate`.
+ * Builds and sends the weekly employee report email for ONE organization.
+ * Each org gets its own email with its own data, recipients and subject.
  */
-export async function runWeeklyReportJob(referenceDate: Date = new Date()): Promise<WeeklyReportJobResult> {
+async function runForOrganization(
+  org: { id: number; slug: string; name: string },
+  referenceDate: Date
+): Promise<WeeklyReportJobOrgResult> {
+  const organizationId = org.id;
   const { weekStart, weekEnd } = getWeekRange(referenceDate);
   const weekStartStr = formatDate(weekStart);
   const weekEndStr = formatDate(weekEnd);
 
-  // 1. Recipients: every active admin + super_admin with an email, plus any
-  //    additional addresses configured by the Super Admin from Settings.
+  // 1. Recipients: every active admin + super_admin OF THIS ORG with an
+  //    email, plus any additional addresses configured for this org.
   const [recipientUsers, extraEmails] = await Promise.all([
     prisma.user.findMany({
       where: {
+        organizationId,
         role: { in: ['admin', 'super_admin'] },
         status: 'active',
       },
       select: { id: true, name: true, email: true, role: true },
     }),
-    reportRecipientsService.listEmails(),
+    reportRecipientsService.listEmails(organizationId),
   ]);
 
   const seen = new Set<string>();
@@ -81,18 +95,21 @@ export async function runWeeklyReportJob(referenceDate: Date = new Date()): Prom
 
   if (recipients.length === 0) {
     return {
+      organizationId,
+      organizationSlug: org.slug,
+      organizationName: org.name,
       weekStart: weekStartStr,
       weekEnd: weekEndStr,
       recipients: [],
       rowCount: 0,
       submittedCount: 0,
-      skippedReason: 'No active admin / super_admin recipients found',
+      skippedReason: 'No active admin / super_admin recipients found for this organization',
     };
   }
 
-  // 2. All active employees, with department + team leader
+  // 2. All active employees in this org, with department + team leader
   const employees = await prisma.user.findMany({
-    where: { role: 'employee', status: 'active' },
+    where: { organizationId, role: 'employee', status: 'active' },
     include: {
       department: {
         select: {
@@ -105,9 +122,10 @@ export async function runWeeklyReportJob(referenceDate: Date = new Date()): Prom
     orderBy: [{ department: { name: 'asc' } }, { name: 'asc' }],
   });
 
-  // 3. This week's weekly reports, keyed by userId (latest per user)
+  // 3. This week's weekly reports for this org, keyed by userId (latest per user)
   const weeklyReports = await prisma.report.findMany({
     where: {
+      organizationId,
       reportType: 'weekly',
       reportDate: { gte: weekStart, lte: weekEnd },
       user: { role: 'employee' },
@@ -168,7 +186,8 @@ export async function runWeeklyReportJob(referenceDate: Date = new Date()): Prom
     notSubmitted: tableRows.length - submittedCount,
   };
 
-  const attachmentFilename = `taskflow-weekly-report-${weekStartStr}_to_${weekEndStr}.xlsx`;
+  // Per-org filename so concurrent runs for different tenants don't collide
+  const attachmentFilename = `taskflow-${org.slug}-weekly-report-${weekStartStr}_to_${weekEndStr}.xlsx`;
 
   // 5. Build xlsx, persist to disk, and produce a signed View Report URL
   const xlsxBuffer = await buildWeeklyReportXlsx({ weekRange: weekRangeLabel, rows: xlsxRows });
@@ -185,11 +204,12 @@ export async function runWeeklyReportJob(referenceDate: Date = new Date()): Prom
     totals,
   });
 
-  // 7. Send (BCC so recipients don't see each other)
+  // 7. Send (BCC so recipients don't see each other). Subject carries the
+  // org's display name so the recipient knows which tenant this is for.
   const result = await mailService.send({
     to: recipients[0],
     bcc: recipients.slice(1),
-    subject: `[TaskFlow] Weekly Employee Report — ${weekStartStr} to ${weekEndStr}`,
+    subject: `[${org.name}] Weekly Employee Report — ${weekStartStr} to ${weekEndStr}`,
     html,
     text,
     attachments: [
@@ -202,11 +222,60 @@ export async function runWeeklyReportJob(referenceDate: Date = new Date()): Prom
   });
 
   return {
+    organizationId,
+    organizationSlug: org.slug,
+    organizationName: org.name,
     weekStart: weekStartStr,
     weekEnd: weekEndStr,
     recipients,
     rowCount: tableRows.length,
     submittedCount,
     messageId: result.messageId,
+  };
+}
+
+/**
+ * Runs the weekly report job across every active organization. Each org
+ * receives its own email with its own data — JJF and 1xl never mix.
+ * Idempotent — safe to invoke manually for testing.
+ */
+export async function runWeeklyReportJob(
+  referenceDate: Date = new Date()
+): Promise<WeeklyReportJobResult> {
+  const orgs = await prisma.organization.findMany({
+    where: { status: 'active' },
+    select: { id: true, slug: true, name: true },
+  });
+
+  const { weekStart, weekEnd } = getWeekRange(referenceDate);
+  const weekStartStr = formatDate(weekStart);
+  const weekEndStr = formatDate(weekEnd);
+
+  const perOrg: WeeklyReportJobOrgResult[] = [];
+  for (const org of orgs) {
+    try {
+      const result = await runForOrganization(org, referenceDate);
+      perOrg.push(result);
+    } catch (err) {
+      // One org's failure shouldn't block other orgs' emails — log & continue.
+      console.error(`[weeklyReportJob] org=${org.slug} failed:`, err);
+      perOrg.push({
+        organizationId: org.id,
+        organizationSlug: org.slug,
+        organizationName: org.name,
+        weekStart: weekStartStr,
+        weekEnd: weekEndStr,
+        recipients: [],
+        rowCount: 0,
+        submittedCount: 0,
+        skippedReason: `Job failed: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  return {
+    weekStart: weekStartStr,
+    weekEnd: weekEndStr,
+    perOrg,
   };
 }

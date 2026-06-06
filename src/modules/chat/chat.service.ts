@@ -44,16 +44,22 @@ async function ensureParticipant(conversationId: number, userId: number) {
 }
 
 export const chatService = {
-  async listConversations(userId: number) {
+  async listConversations(userId: number, organizationId: number) {
     // Auto-enroll the user into their department's auto group chat (if any) so
     // it shows up the first time they open chat after the feature is enabled.
+    // Constrain the lookup to the user's org so we never auto-add a JJF user
+    // into a 1xl group that happens to share a department name.
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { departmentId: true },
     });
     if (user?.departmentId) {
       const deptGroup = await prisma.conversation.findFirst({
-        where: { departmentId: user.departmentId, isAutoDepartmentGroup: true },
+        where: {
+          departmentId: user.departmentId,
+          isAutoDepartmentGroup: true,
+          organizationId,
+        },
         select: { id: true },
       });
       if (deptGroup) {
@@ -67,6 +73,7 @@ export const chatService = {
 
     const convs = await prisma.conversation.findMany({
       where: {
+        organizationId,
         participants: { some: { userId } },
       },
       include: {
@@ -85,7 +92,17 @@ export const chatService = {
     return convs;
   },
 
-  async getMessages(conversationId: number, userId: number) {
+  async getMessages(conversationId: number, userId: number, organizationId: number) {
+    // Cross-tenant fence: confirm the conversation actually belongs to the
+    // caller's org before we even check participation. Returns the
+    // generic "not a participant" error so id-probing yields no signal.
+    const conv = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { organizationId: true },
+    });
+    if (!conv || conv.organizationId !== organizationId) {
+      throw new Error('You are not a participant of this conversation');
+    }
     const participant = await ensureParticipant(conversationId, userId);
     if (!participant) throw new Error('You are not a participant of this conversation');
 
@@ -104,9 +121,24 @@ export const chatService = {
     participantIds: number[];
     createdById: number;
     departmentId?: number;
+    organizationId: number;
   }) {
     // Ensure creator is in the participants list
     const allParticipantIds = Array.from(new Set([...data.participantIds, data.createdById]));
+
+    // Defense in depth: confirm every participant actually belongs to this
+    // org so a malicious caller can't sneak a cross-tenant DM into existence
+    // by passing a foreign userId.
+    const participants = await prisma.user.findMany({
+      where: { id: { in: allParticipantIds } },
+      select: { id: true, organizationId: true },
+    });
+    if (participants.length !== allParticipantIds.length) {
+      throw new Error('One or more participants do not exist');
+    }
+    if (participants.some((p) => p.organizationId !== data.organizationId)) {
+      throw new Error('Cannot create a conversation with users from another organization');
+    }
 
     const conversationInclude = {
       participants: { include: { user: { select: { id: true, name: true } } } },
@@ -139,6 +171,7 @@ export const chatService = {
       try {
         return await prisma.conversation.create({
           data: {
+            organizationId: data.organizationId,
             type: data.type,
             name: data.name,
             departmentId: data.departmentId,
@@ -165,6 +198,7 @@ export const chatService = {
 
     return prisma.conversation.create({
       data: {
+        organizationId: data.organizationId,
         type: data.type,
         name: data.name,
         departmentId: data.departmentId,
@@ -261,9 +295,12 @@ export const chatService = {
       participantIds.add(u.id);
     }
 
-    // Create the group chat with isAutoDepartmentGroup flag
+    // Create the group chat with isAutoDepartmentGroup flag.
+    // The conversation inherits the department's organizationId so the
+    // chat lives in the same tenant as the dept it represents.
     const conversation = await prisma.conversation.create({
       data: {
+        organizationId: department.organizationId,
         type: 'group',
         name: `${department.name} - Group Chat`,
         departmentId,
