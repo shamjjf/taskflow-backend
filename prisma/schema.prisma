@@ -79,21 +79,56 @@ enum ReferenceType {
   system
 }
 
+enum OrganizationStatus {
+  active
+  inactive
+}
+
 // ============ MODELS ============
 
+// Top-level tenant. Every other tenant-scoped row carries `organizationId`
+// pointing here. The default org (id=1) is "JJF India" and is created by
+// the migration that introduces this table — existing data is backfilled
+// to it. Slug is used in subdomains / login headers (e.g. jjfindia, 1xl)
+// and must stay URL-safe.
+model Organization {
+  id        Int                @id @default(autoincrement())
+  slug      String             @unique @db.VarChar(50)
+  name      String             @db.VarChar(150)
+  status    OrganizationStatus @default(active)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  users            User[]
+  departments      Department[]
+  tasks            Task[]
+  reports          Report[]
+  conversations    Conversation[]
+  notifications    Notification[]
+  activityLogs     ActivityLog[]
+  reportRecipients ReportRecipient[]
+  settings         OrganizationSettings?
+
+  @@map("organizations")
+}
+
 model Department {
-  id            Int      @id @default(autoincrement())
-  name          String   @unique @db.VarChar(100)
-  description   String?  @db.Text
-  teamLeaderId  Int?     @map("team_leader_id")
-  teamLeader    User?    @relation("DepartmentLeader", fields: [teamLeaderId], references: [id], onDelete: SetNull)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @default(1) @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String       @db.VarChar(100)
+  description    String?      @db.Text
+  teamLeaderId   Int?         @map("team_leader_id")
+  teamLeader     User?        @relation("DepartmentLeader", fields: [teamLeaderId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   users         User[]         @relation("DepartmentMembers")
   tasks         Task[]
   conversations Conversation[]
 
+  @@unique([name, organizationId])
+  @@index([organizationId])
   @@map("departments")
 }
 
