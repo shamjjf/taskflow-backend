@@ -7,6 +7,9 @@ import { asyncHandler } from '@/utils/asyncHandler';
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  // Optional today (legacy clients) — required once the frontend dropdown
+  // ships. Resolves to the org the user is logging into.
+  orgSlug: z.string().min(1).optional(),
 });
 
 const refreshSchema = z.object({
@@ -29,9 +32,9 @@ const registerSchema = z.object({
 
 export const authController = {
   login: asyncHandler(async (req: Request, res: Response) => {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email, password, orgSlug } = loginSchema.parse(req.body);
     try {
-      const result = await authService.login(email, password);
+      const result = await authService.login(email, password, orgSlug);
       return ok(res, result, 'Login successful');
     } catch (err) {
       return unauthorized(res, 'Invalid email or password');

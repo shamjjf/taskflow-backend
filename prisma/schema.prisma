@@ -98,21 +98,23 @@ model Department {
 }
 
 model User {
-  id             Int         @id @default(autoincrement())
-  name           String      @db.VarChar(150)
-  email          String      @unique @db.VarChar(150)
-  passwordHash   String      @map("password_hash") @db.VarChar(255)
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @default(1) @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String       @db.VarChar(150)
+  email          String       @db.VarChar(150)
+  passwordHash   String       @map("password_hash") @db.VarChar(255)
   role           UserRole
-  departmentId   Int?        @map("department_id")
-  department     Department? @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
-  designation    String?     @db.VarChar(100)
-  profileImage   String?     @map("profile_image") @db.VarChar(255)
-  phone          String?     @db.VarChar(20)
-  status         UserStatus  @default(active)
-  lastLoginAt    DateTime?   @map("last_login_at")
-  refreshToken   String?     @map("refresh_token") @db.VarChar(500)
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
+  departmentId   Int?         @map("department_id")
+  department     Department?  @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  designation    String?      @db.VarChar(100)
+  profileImage   String?      @map("profile_image") @db.VarChar(255)
+  phone          String?      @db.VarChar(20)
+  status         UserStatus   @default(active)
+  lastLoginAt    DateTime?    @map("last_login_at")
+  refreshToken   String?      @map("refresh_token") @db.VarChar(500)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   ledDepartments          Department[]              @relation("DepartmentLeader")
   createdTasks            Task[]                    @relation("TaskCreator")
@@ -127,32 +129,37 @@ model User {
   notifications           Notification[]
   activityLogs            ActivityLog[]
 
+  @@unique([email, organizationId])
+  @@index([organizationId])
   @@index([role])
   @@index([departmentId])
   @@map("users")
 }
 
 model Task {
-  id            Int           @id @default(autoincrement())
-  title         String        @db.VarChar(255)
-  description   String?       @db.Text
-  createdById   Int           @map("created_by")
-  createdBy     User          @relation("TaskCreator", fields: [createdById], references: [id])
-  departmentId  Int           @map("department_id")
-  department    Department    @relation(fields: [departmentId], references: [id])
-  priority      TaskPriority  @default(medium)
-  status        TaskStatus    @default(assigned)
-  deadline      DateTime
-  startedAt     DateTime?     @map("started_at")
-  completedAt   DateTime?     @map("completed_at")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @default(1) @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  title          String       @db.VarChar(255)
+  description    String?      @db.Text
+  createdById    Int          @map("created_by")
+  createdBy      User         @relation("TaskCreator", fields: [createdById], references: [id])
+  departmentId   Int          @map("department_id")
+  department     Department   @relation(fields: [departmentId], references: [id])
+  priority       TaskPriority @default(medium)
+  status         TaskStatus   @default(assigned)
+  deadline       DateTime
+  startedAt      DateTime?    @map("started_at")
+  completedAt    DateTime?    @map("completed_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
-  assignees     TaskAssignee[]
-  attachments   TaskAttachment[]
-  comments      TaskComment[]
-  reports       Report[]
+  assignees   TaskAssignee[]
+  attachments TaskAttachment[]
+  comments    TaskComment[]
+  reports     Report[]
 
+  @@index([organizationId])
   @@index([status])
   @@index([deadline])
   @@index([departmentId, status])
@@ -202,25 +209,28 @@ model TaskComment {
 }
 
 model Report {
-  id                    Int            @id @default(autoincrement())
-  userId                Int            @map("user_id")
-  user                  User           @relation("ReportAuthor", fields: [userId], references: [id])
-  taskId                Int?           @map("task_id")
-  task                  Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  reportType            ReportType     @map("report_type")
-  weeklyObjective       String?        @map("weekly_objective") @db.Text
-  description           String         @db.Text
-  attachmentUrl         String?        @map("attachment_url") @db.VarChar(500)
-  reportDate            DateTime       @map("report_date") @db.Date
-  approvalStatus        ApprovalStatus @default(pending) @map("approval_status")
-  reviewedById          Int?           @map("reviewed_by")
-  reviewedBy            User?          @relation("ReportReviewer", fields: [reviewedById], references: [id])
-  reviewedAt            DateTime?      @map("reviewed_at")
-  reviewComment         String?        @map("review_comment") @db.Text
-  visibleToSuperAdmin   Boolean        @default(false) @map("visible_to_super_admin")
-  createdAt             DateTime       @default(now()) @map("created_at")
-  updatedAt             DateTime       @updatedAt @map("updated_at")
+  id                  Int            @id @default(autoincrement())
+  organizationId      Int            @default(1) @map("organization_id")
+  organization        Organization   @relation(fields: [organizationId], references: [id])
+  userId              Int            @map("user_id")
+  user                User           @relation("ReportAuthor", fields: [userId], references: [id])
+  taskId              Int?           @map("task_id")
+  task                Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  reportType          ReportType     @map("report_type")
+  weeklyObjective     String?        @map("weekly_objective") @db.Text
+  description         String         @db.Text
+  attachmentUrl       String?        @map("attachment_url") @db.VarChar(500)
+  reportDate          DateTime       @map("report_date") @db.Date
+  approvalStatus      ApprovalStatus @default(pending) @map("approval_status")
+  reviewedById        Int?           @map("reviewed_by")
+  reviewedBy          User?          @relation("ReportReviewer", fields: [reviewedById], references: [id])
+  reviewedAt          DateTime?      @map("reviewed_at")
+  reviewComment       String?        @map("review_comment") @db.Text
+  visibleToSuperAdmin Boolean        @default(false) @map("visible_to_super_admin")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
 
+  @@index([organizationId])
   @@index([approvalStatus])
   @@index([userId, reportDate])
   @@map("reports")
@@ -228,6 +238,8 @@ model Report {
 
 model Conversation {
   id                    Int              @id @default(autoincrement())
+  organizationId        Int              @default(1) @map("organization_id")
+  organization          Organization     @relation(fields: [organizationId], references: [id])
   type                  ConversationType
   name                  String?          @db.VarChar(150)
   departmentId          Int?             @map("department_id")
@@ -249,6 +261,7 @@ model Conversation {
   messages     Message[]
 
   @@unique([directUserAId, directUserBId])
+  @@index([organizationId])
   @@index([departmentId, isAutoDepartmentGroup])
   @@map("conversations")
 }
@@ -284,54 +297,67 @@ model Message {
 }
 
 model Notification {
-  id            Int              @id @default(autoincrement())
-  userId        Int              @map("user_id")
-  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type          NotificationType
-  title         String           @db.VarChar(255)
-  message       String           @db.Text
-  referenceType ReferenceType?   @map("reference_type")
-  referenceId   Int?             @map("reference_id")
-  isRead        Boolean          @default(false) @map("is_read")
-  createdAt     DateTime         @default(now()) @map("created_at")
+  id             Int              @id @default(autoincrement())
+  organizationId Int              @default(1) @map("organization_id")
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  userId         Int              @map("user_id")
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           NotificationType
+  title          String           @db.VarChar(255)
+  message        String           @db.Text
+  referenceType  ReferenceType?   @map("reference_type")
+  referenceId    Int?             @map("reference_id")
+  isRead         Boolean          @default(false) @map("is_read")
+  createdAt      DateTime         @default(now()) @map("created_at")
 
+  @@index([organizationId])
   @@index([userId, isRead])
   @@map("notifications")
 }
 
 model ActivityLog {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @map("user_id")
-  user       User     @relation(fields: [userId], references: [id])
-  action     String   @db.VarChar(100)
-  entityType String?  @map("entity_type") @db.VarChar(50)
-  entityId   Int?     @map("entity_id")
-  ipAddress  String?  @map("ip_address") @db.VarChar(45)
-  createdAt  DateTime @default(now()) @map("created_at")
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @default(1) @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         Int          @map("user_id")
+  user           User         @relation(fields: [userId], references: [id])
+  action         String       @db.VarChar(100)
+  entityType     String?      @map("entity_type") @db.VarChar(50)
+  entityId       Int?         @map("entity_id")
+  ipAddress      String?      @map("ip_address") @db.VarChar(45)
+  createdAt      DateTime     @default(now()) @map("created_at")
 
+  @@index([organizationId])
   @@map("activity_logs")
 }
 
 // Extra email addresses (beyond the admin/super_admin recipient set) that
 // should receive the automated daily and weekly employee report emails.
-// Managed by Super Admin from the Settings page.
+// Each org maintains its own recipient list; the unique index is composite
+// so the same address can be a recipient in two different orgs.
 model ReportRecipient {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique @db.VarChar(150)
-  label     String?  @db.VarChar(150)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @default(1) @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  email          String       @db.VarChar(150)
+  label          String?      @db.VarChar(150)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
+  @@unique([email, organizationId])
+  @@index([organizationId])
   @@map("report_recipients")
 }
 
-// Singleton organization settings row (id is always 1). Managed by Super
-// Admin from the Settings page → Organization card.
+// Per-organization settings (one row per org, keyed by organizationId).
+// Stores the user-facing company name + timezone + email-branding fields
+// used by the daily/weekly report mailers.
 model OrganizationSettings {
-  id          Int      @id @default(1)
-  companyName String   @default("") @map("company_name") @db.VarChar(150)
-  timeZone    String   @default("ist") @map("time_zone") @db.VarChar(50)
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  organizationId Int          @id @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companyName    String       @default("") @map("company_name") @db.VarChar(150)
+  timeZone       String       @default("ist") @map("time_zone") @db.VarChar(50)
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   @@map("organization_settings")
 }

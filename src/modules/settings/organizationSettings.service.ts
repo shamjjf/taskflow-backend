@@ -1,36 +1,36 @@
 import { prisma } from '@/config/prisma';
 
-const SINGLETON_ID = 1;
-
 const DEFAULTS = {
   companyName: '',
   timeZone: 'ist',
 };
 
+// Per-organization settings: one row per organizationId. The schema changed
+// from a singleton (id=1) to a per-tenant table — the row is auto-created
+// the first time an org's super_admin opens the Settings page.
 export const organizationSettingsService = {
-  /**
-   * Returns the singleton organization settings row, creating it with
-   * defaults on first access.
-   */
-  async get() {
+  async get(organizationId: number) {
     const existing = await prisma.organizationSettings.findUnique({
-      where: { id: SINGLETON_ID },
+      where: { organizationId },
     });
     if (existing) return existing;
     return prisma.organizationSettings.create({
-      data: { id: SINGLETON_ID, ...DEFAULTS },
+      data: { organizationId, ...DEFAULTS },
     });
   },
 
-  async update(data: { companyName?: string; timeZone?: string }) {
+  async update(
+    organizationId: number,
+    data: { companyName?: string; timeZone?: string }
+  ) {
     return prisma.organizationSettings.upsert({
-      where: { id: SINGLETON_ID },
+      where: { organizationId },
       update: {
         ...(data.companyName !== undefined && { companyName: data.companyName.trim() }),
         ...(data.timeZone !== undefined && { timeZone: data.timeZone }),
       },
       create: {
-        id: SINGLETON_ID,
+        organizationId,
         companyName: data.companyName?.trim() ?? DEFAULTS.companyName,
         timeZone: data.timeZone ?? DEFAULTS.timeZone,
       },

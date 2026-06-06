@@ -123,6 +123,7 @@ export const usersController = {
     const users = await usersService.list(filters, {
       role: req.user.role,
       departmentId: req.user.departmentId,
+      organizationId: req.user.organizationId,
     });
     return ok(res, users);
   }),
@@ -132,6 +133,11 @@ export const usersController = {
     const id = parseInt(req.params.id, 10);
     const user = await usersService.getById(id);
     if (!user) return notFound(res, 'User not found');
+
+    // Multi-tenant guard: even Super Admin can't peek into another org.
+    if (user.organizationId !== req.user.organizationId) {
+      return notFound(res, 'User not found');
+    }
 
     // Always allow self.
     if (user.id === req.user.userId) return ok(res, user);
@@ -170,7 +176,11 @@ export const usersController = {
         return forbidden(res, 'Team leaders can only add users to their own department');
       }
     }
-    const payload = data.role === 'admin' ? { ...data, departmentId: undefined } : data;
+    const basePayload = data.role === 'admin' ? { ...data, departmentId: undefined } : data;
+    // Always pin the new user to the creator's org — even Super Admins
+    // can't seed a user into a different tenant via this endpoint. New
+    // orgs are created out-of-band (seed script / future admin tool).
+    const payload = { ...basePayload, organizationId: req.user.organizationId };
     const user = await usersService.create(payload);
     return created(res, user, 'User created');
   }),

@@ -34,7 +34,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     const fresh = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, email: true, role: true, departmentId: true, status: true },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        departmentId: true,
+        organizationId: true,
+        status: true,
+        organization: { select: { status: true } },
+      },
     });
     if (!fresh) {
       return unauthorized(res, 'Account no longer exists');
@@ -42,11 +50,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (fresh.status === 'inactive') {
       return forbidden(res, 'Account is deactivated');
     }
+    // Also fail closed if the user's org itself was suspended so we
+    // can de-provision a tenant by flipping one flag.
+    if (fresh.organization && fresh.organization.status !== 'active') {
+      return forbidden(res, 'Organization is not active');
+    }
     req.user = {
       userId: fresh.id,
       email: fresh.email,
       role: fresh.role,
       departmentId: fresh.departmentId,
+      organizationId: fresh.organizationId,
     };
     next();
   } catch (err) {

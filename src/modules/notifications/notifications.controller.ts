@@ -6,7 +6,10 @@ import { asyncHandler } from '@/utils/asyncHandler';
 export const notificationsController = {
   list: asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) return unauthorized(res);
-    const notifications = await notificationsService.list(req.user.userId);
+    const notifications = await notificationsService.list(
+      req.user.userId,
+      req.user.organizationId
+    );
     return ok(res, notifications);
   }),
 

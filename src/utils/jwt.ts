@@ -7,6 +7,10 @@ export interface JwtPayload {
   email: string;
   role: UserRole;
   departmentId: number | null;
+  // Multi-tenancy: every authenticated request is scoped to the org the
+  // user belongs to. Baked into the JWT so middleware/services can filter
+  // queries without an extra DB hit.
+  organizationId: number;
 }
 
 export function signAccessToken(payload: JwtPayload): string {

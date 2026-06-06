@@ -71,6 +71,7 @@ export const tasksController = {
       userId: req.user.userId,
       role: req.user.role,
       departmentId: req.user.departmentId,
+      organizationId: req.user.organizationId,
     });
     return ok(res, tasks);
   }),
@@ -80,6 +81,11 @@ export const tasksController = {
     const id = parseInt(req.params.id, 10);
     const task = await tasksService.getById(id);
     if (!task) return notFound(res, 'Task not found');
+    // Cross-tenant fence first — a hardened 404 leaks nothing about
+    // existence of an id outside the caller's org.
+    if (task.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Task not found');
+    }
     if (!canAccessTask(task, req.user)) {
       return forbidden(res, 'Not authorized to view this task');
     }
@@ -96,7 +102,7 @@ export const tasksController = {
       return forbidden(res, 'Team Leaders can only assign tasks within their own department');
     }
 
-    const task = await tasksService.create(data, req.user.userId);
+    const task = await tasksService.create(data, req.user.userId, req.user.organizationId);
     return created(res, task, 'Task created');
   }),
 
@@ -130,7 +136,11 @@ export const tasksController = {
     if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     try {
-      const task = await tasksService.startTask(id, req.user.userId);
+      const task = await tasksService.startTask(
+        id,
+        req.user.userId,
+        req.user.organizationId
+      );
       return ok(res, task, 'Task started');
     } catch (err) {
       return badRequest(res, (err as Error).message);
@@ -152,7 +162,11 @@ export const tasksController = {
     if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     try {
-      const task = await tasksService.reviewTask(id, req.user.userId);
+      const task = await tasksService.reviewTask(
+        id,
+        req.user.userId,
+        req.user.organizationId
+      );
       return ok(res, task, 'Task submitted for review');
     } catch (err) {
       return badRequest(res, (err as Error).message);

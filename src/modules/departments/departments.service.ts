@@ -19,8 +19,9 @@ async function assertCanBecomeTeamLeader(userId: number) {
 }
 
 export const departmentsService = {
-  async list() {
+  async list(organizationId: number) {
     const departments = await prisma.department.findMany({
+      where: { organizationId },
       include: {
         teamLeader: { select: { id: true, name: true, email: true } },
         _count: {
@@ -65,7 +66,12 @@ export const departmentsService = {
     });
   },
 
-  async create(data: { name: string; description?: string; teamLeaderId?: number }) {
+  async create(data: {
+    name: string;
+    description?: string;
+    teamLeaderId?: number;
+    organizationId: number;
+  }) {
     if (data.teamLeaderId !== undefined) {
       await assertCanBecomeTeamLeader(data.teamLeaderId);
     }
@@ -165,9 +171,9 @@ export const departmentsService = {
     return department;
   },
 
-  async getMembers(departmentId: number) {
+  async getMembers(departmentId: number, organizationId: number) {
     return prisma.user.findMany({
-      where: { departmentId },
+      where: { departmentId, organizationId },
       select: {
         id: true,
         name: true,

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { departmentsService } from './departments.service';
-import { ok, created, notFound, forbidden, badRequest } from '@/utils/response';
+import { ok, created, notFound, forbidden, badRequest, unauthorized } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { departmentGroupChatSeeder } from '@/utils/departmentGroupChatSeeder';
 
@@ -29,22 +29,32 @@ const assignLeaderSchema = z.object({
 });
 
 export const departmentsController = {
-  list: asyncHandler(async (_req: Request, res: Response) => {
-    const depts = await departmentsService.list();
+  list: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const depts = await departmentsService.list(req.user.organizationId);
     return ok(res, depts);
   }),
 
   get: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
     const dept = await departmentsService.getById(id);
     if (!dept) return notFound(res, 'Department not found');
+    // Multi-tenant guard
+    if (dept.organizationId !== req.user.organizationId) {
+      return notFound(res, 'Department not found');
+    }
     return ok(res, dept);
   }),
 
   create: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const data = createSchema.parse(req.body);
     try {
-      const dept = await departmentsService.create(data);
+      const dept = await departmentsService.create({
+        ...data,
+        organizationId: req.user.organizationId,
+      });
       return created(res, dept, 'Department created');
     } catch (err) {
       const handled = handleTeamLeaderError(res, err);
@@ -86,8 +96,9 @@ export const departmentsController = {
   }),
 
   members: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const id = parseInt(req.params.id, 10);
-    const members = await departmentsService.getMembers(id);
+    const members = await departmentsService.getMembers(id, req.user.organizationId);
     return ok(res, members);
   }),
 

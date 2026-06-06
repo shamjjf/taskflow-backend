@@ -34,11 +34,11 @@ const taskInclude = {
 export const tasksService = {
   async list(
     filters: TasksFilters,
-    requester: { userId: number; role: UserRole; departmentId: number | null }
+    requester: { userId: number; role: UserRole; departmentId: number | null; organizationId: number }
   ) {
     const where: {
       AND: Array<Record<string, unknown>>;
-    } = { AND: [] };
+    } = { AND: [{ organizationId: requester.organizationId }] };
 
     if (requester.role === 'employee') {
       where.AND.push({
@@ -68,10 +68,8 @@ export const tasksService = {
       });
     }
 
-    const finalWhere = where.AND.length > 0 ? where : {};
-
     return prisma.task.findMany({
-      where: finalWhere,
+      where,
       include: taskInclude,
       orderBy: [{ priority: 'desc' }, { deadline: 'asc' }],
     });
@@ -93,9 +91,10 @@ export const tasksService = {
     });
   },
 
-  async create(input: CreateTaskInput, createdById: number) {
+  async create(input: CreateTaskInput, createdById: number, organizationId: number) {
     const task = await prisma.task.create({
       data: {
+        organizationId,
         title: input.title,
         description: input.description,
         departmentId: input.departmentId,
@@ -157,7 +156,7 @@ export const tasksService = {
     });
   },
 
-  async startTask(id: number, userId: number) {
+  async startTask(id: number, userId: number, organizationId: number) {
     const task = await prisma.task.findUnique({
       where: { id },
       include: {
@@ -166,6 +165,9 @@ export const tasksService = {
       },
     });
     if (!task) throw new Error('Task not found');
+    // Cross-tenant fence: surface a not-found rather than auth error so
+    // attackers can't probe ids that exist in other orgs.
+    if (task.organizationId !== organizationId) throw new Error('Task not found');
 
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');
@@ -221,7 +223,10 @@ export const tasksService = {
     return updated;
   },
 
-  async completeTask(id: number, requester: { userId: number; role: UserRole; departmentId: number | null }) {
+  async completeTask(
+    id: number,
+    requester: { userId: number; role: UserRole; departmentId: number | null; organizationId: number }
+  ) {
     const task = await prisma.task.findUnique({
       where: { id },
       include: {
@@ -230,6 +235,7 @@ export const tasksService = {
       },
     });
     if (!task) throw new Error('Task not found');
+    if (task.organizationId !== requester.organizationId) throw new Error('Task not found');
 
     const isTeamLeaderOfDept =
       requester.role === 'team_leader' && requester.departmentId === task.departmentId;
@@ -288,7 +294,7 @@ export const tasksService = {
 
   async rejectTask(
     id: number,
-    requester: { userId: number; role: UserRole; departmentId: number | null },
+    requester: { userId: number; role: UserRole; departmentId: number | null; organizationId: number },
     reason: string
   ) {
     const task = await prisma.task.findUnique({
@@ -299,6 +305,7 @@ export const tasksService = {
       },
     });
     if (!task) throw new Error('Task not found');
+    if (task.organizationId !== requester.organizationId) throw new Error('Task not found');
 
     const isTeamLeaderOfDept =
       requester.role === 'team_leader' && requester.departmentId === task.departmentId;
@@ -363,7 +370,7 @@ export const tasksService = {
     return updated;
   },
 
-  async reviewTask(id: number, userId: number) {
+  async reviewTask(id: number, userId: number, organizationId: number) {
     const task = await prisma.task.findUnique({
       where: { id },
       include: {
@@ -373,6 +380,7 @@ export const tasksService = {
     });
 
     if (!task) throw new Error('Task not found');
+    if (task.organizationId !== organizationId) throw new Error('Task not found');
 
     const isAssigned = task.assignees.some((a) => a.userId === userId);
     if (!isAssigned) throw new Error('You are not assigned to this task');

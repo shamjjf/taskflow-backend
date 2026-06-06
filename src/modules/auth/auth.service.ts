@@ -5,9 +5,26 @@ import { UserRole } from '@prisma/client';
 import { socketEvents } from '@/sockets';
 
 export const authService = {
-  async login(email: string, password: string) {
+  async login(email: string, password: string, orgSlug?: string) {
+    // Multi-tenancy: when an orgSlug is supplied (login form picks it from
+    // a dropdown today, subdomain later), resolve the user inside that org
+    // so the same email can exist across multiple orgs without conflict.
+    // Falls back to the default org (id=1, JJF India) when no slug is
+    // provided so legacy clients keep working until Phase 3 ships.
+    let organizationId = 1;
+    if (orgSlug) {
+      const org = await prisma.organization.findUnique({
+        where: { slug: orgSlug },
+        select: { id: true, status: true },
+      });
+      if (!org || org.status !== 'active') {
+        throw new Error('Invalid credentials');
+      }
+      organizationId = org.id;
+    }
+
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { email_organizationId: { email, organizationId } },
       include: { department: { select: { name: true } } },
     });
 
@@ -25,6 +42,7 @@ export const authService = {
       email: user.email,
       role: user.role,
       departmentId: user.departmentId,
+      organizationId: user.organizationId,
     };
 
     const accessToken = signAccessToken(payload);
@@ -47,6 +65,7 @@ export const authService = {
         departmentName: user.department?.name || null,
         designation: user.designation,
         profileImage: user.profileImage,
+        organizationId: user.organizationId,
       },
     };
   },
@@ -67,6 +86,7 @@ export const authService = {
       email: user.email,
       role: user.role,
       departmentId: user.departmentId,
+      organizationId: user.organizationId,
     };
 
     const newAccessToken = signAccessToken(newPayload);

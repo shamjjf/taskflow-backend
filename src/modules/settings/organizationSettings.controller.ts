@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { organizationSettingsService } from './organizationSettings.service';
-import { ok } from '@/utils/response';
+import { ok, unauthorized } from '@/utils/response';
 import { asyncHandler } from '@/utils/asyncHandler';
 
 const updateSchema = z.object({
@@ -10,14 +10,19 @@ const updateSchema = z.object({
 });
 
 export const organizationSettingsController = {
-  get: asyncHandler(async (_req: Request, res: Response) => {
-    const settings = await organizationSettingsService.get();
+  get: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const settings = await organizationSettingsService.get(req.user.organizationId);
     return ok(res, settings);
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
     const data = updateSchema.parse(req.body);
-    const settings = await organizationSettingsService.update(data);
+    const settings = await organizationSettingsService.update(
+      req.user.organizationId,
+      data
+    );
     return ok(res, settings, 'Organization settings updated');
   }),
 };

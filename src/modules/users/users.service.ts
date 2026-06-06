@@ -11,12 +11,16 @@ export interface UsersFilters {
 }
 
 export const usersService = {
-  async list(filters: UsersFilters, requester: { role: UserRole; departmentId: number | null }) {
+  async list(
+    filters: UsersFilters,
+    requester: { role: UserRole; departmentId: number | null; organizationId: number }
+  ) {
     const where: {
+      organizationId: number;
       departmentId?: number;
       role?: UserRole | { in?: UserRole[]; notIn?: UserRole[] };
       status?: 'active' | 'inactive';
-    } = {};
+    } = { organizationId: requester.organizationId };
 
     if (filters.departmentId) where.departmentId = filters.departmentId;
     if (filters.status) where.status = filters.status;
@@ -85,6 +89,9 @@ export const usersService = {
         status: true,
         lastLoginAt: true,
         createdAt: true,
+        // Needed by callers (controllers) so they can enforce cross-org
+        // protection before returning the row to the client.
+        organizationId: true,
       },
     });
     if (!user) return null;
@@ -99,6 +106,7 @@ export const usersService = {
     role: UserRole;
     departmentId?: number;
     designation?: string;
+    organizationId: number;
   }) {
     const passwordHash = await hashPassword(data.password);
     const user = await prisma.user.create({
@@ -109,6 +117,7 @@ export const usersService = {
         role: data.role,
         departmentId: data.departmentId,
         designation: data.designation,
+        organizationId: data.organizationId,
       },
       select: {
         id: true,

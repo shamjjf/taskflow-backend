@@ -14,9 +14,13 @@ function pushSocket(userId: number, notification: unknown) {
 }
 
 export const notificationsService = {
-  async list(userId: number) {
+  async list(userId: number, organizationId: number) {
+    // Notification rows carry an explicit organizationId — filter on it
+    // even though the userId join would technically achieve the same,
+    // so an attacker who forged a notification with the wrong org id
+    // still can't read it through this endpoint.
     return prisma.notification.findMany({
-      where: { userId },
+      where: { userId, organizationId },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -30,7 +34,16 @@ export const notificationsService = {
     referenceType?: ReferenceType;
     referenceId?: number;
   }) {
-    const notification = await prisma.notification.create({ data });
+    // Notification rows are denormalized with organizationId for fast
+    // per-tenant filtering; we resolve it from the recipient user here so
+    // callers don't have to pass it everywhere.
+    const recipient = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { organizationId: true },
+    });
+    const notification = await prisma.notification.create({
+      data: { ...data, organizationId: recipient?.organizationId ?? 1 },
+    });
     pushSocket(data.userId, notification);
     return notification;
   },
@@ -60,13 +73,14 @@ export const notificationsService = {
       referenceType?: ReferenceType;
       referenceId?: number;
     },
-    options?: { excludeUserId?: number }
+    options?: { excludeUserId?: number; organizationId?: number }
   ) {
-    // Admin AND super_admin both get "admin-tier" notifications. The
-    // previous filter only matched `admin` which left the Super Admin out
-    // of every task event feed.
+    // Admin tier is per-org now: only notify admins/super_admin who
+    // actually belong to the same organization as the action. If
+    // organizationId isn't passed (legacy callers), fall back to org 1.
+    const organizationId = options?.organizationId ?? 1;
     const admins = await prisma.user.findMany({
-      where: { role: { in: ['admin', 'super_admin'] } },
+      where: { role: { in: ['admin', 'super_admin'] }, organizationId },
       select: { id: true },
     });
     const recipients = options?.excludeUserId
@@ -74,7 +88,7 @@ export const notificationsService = {
       : admins;
     if (recipients.length === 0) return;
     await prisma.notification.createMany({
-      data: recipients.map((a) => ({ userId: a.id, ...payload })),
+      data: recipients.map((a) => ({ userId: a.id, organizationId, ...payload })),
     });
     recipients.forEach((a) => pushSocket(a.id, payload));
   },
