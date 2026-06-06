@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec \"ts-node -r tsconfig-paths/register\" src/index.ts",
-    "build": "tsc && tsc-alias",
+    "postinstall": "prisma generate",
+    "build": "prisma generate && tsc && tsc-alias",
     "start": "npx prisma migrate deploy && node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
