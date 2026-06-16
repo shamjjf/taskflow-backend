@@ -81,38 +81,38 @@ export function getIO(): SocketIOServer {
 // Helper functions to emit events
 export const socketEvents = {
   // Task events
-  taskAssigned(assigneeIds: number[], departmentId: number, task: unknown) {
+  taskAssigned(assigneeIds: number[], departmentId: number | null, task: unknown) {
     const payload = { task };
     assigneeIds.forEach((id) => getIO().to(`user:${id}`).emit('task:assigned', payload));
-    getIO().to(`dept:${departmentId}`).emit('task:assigned', payload);
+    if (departmentId != null) getIO().to(`dept:${departmentId}`).emit('task:assigned', payload);
     getIO().to('role:super_admin').emit('task:assigned', payload);
   },
 
-  taskStarted(taskId: number, departmentId: number, assigneeIds: number[], task: unknown) {
+  taskStarted(taskId: number, departmentId: number | null, assigneeIds: number[], task: unknown) {
     const payload = { taskId, task };
     assigneeIds.forEach((id) => getIO().to(`user:${id}`).emit('task:started', payload));
-    getIO().to(`dept:${departmentId}`).emit('task:started', payload);
+    if (departmentId != null) getIO().to(`dept:${departmentId}`).emit('task:started', payload);
     getIO().to('role:super_admin').emit('task:started', payload);
   },
 
-  taskCompleted(taskId: number, departmentId: number, assigneeIds: number[], task: unknown) {
+  taskCompleted(taskId: number, departmentId: number | null, assigneeIds: number[], task: unknown) {
     const payload = { taskId, task };
     assigneeIds.forEach((id) => getIO().to(`user:${id}`).emit('task:completed', payload));
-    getIO().to(`dept:${departmentId}`).emit('task:completed', payload);
+    if (departmentId != null) getIO().to(`dept:${departmentId}`).emit('task:completed', payload);
     getIO().to('role:super_admin').emit('task:completed', payload);
   },
 
-  taskReviewed(taskId: number, departmentId: number, assigneeIds: number[], task: unknown) {
+  taskReviewed(taskId: number, departmentId: number | null, assigneeIds: number[], task: unknown) {
     const payload = { taskId, task };
     assigneeIds.forEach((id) => getIO().to(`user:${id}`).emit('task:reviewed', payload));
-    getIO().to(`dept:${departmentId}`).emit('task:reviewed', payload);
+    if (departmentId != null) getIO().to(`dept:${departmentId}`).emit('task:reviewed', payload);
     getIO().to('role:super_admin').emit('task:reviewed', payload);
   },
 
-  taskRejected(taskId: number, departmentId: number, assigneeIds: number[], task: unknown) {
+  taskRejected(taskId: number, departmentId: number | null, assigneeIds: number[], task: unknown) {
     const payload = { taskId, task };
     assigneeIds.forEach((id) => getIO().to(`user:${id}`).emit('task:rejected', payload));
-    getIO().to(`dept:${departmentId}`).emit('task:rejected', payload);
+    if (departmentId != null) getIO().to(`dept:${departmentId}`).emit('task:rejected', payload);
     getIO().to('role:super_admin').emit('task:rejected', payload);
   },
 

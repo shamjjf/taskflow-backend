@@ -25,6 +25,7 @@ export async function checkOverdueTasks(): Promise<void> {
     },
     include: {
       assignees: { include: { user: true } },
+      createdBy: { select: { role: true } },
       department: { include: { teamLeader: true } },
     },
   });
@@ -42,9 +43,16 @@ export async function checkOverdueTasks(): Promise<void> {
       });
     }
 
+    // A Sub-Admin's self-task is private: its overdue alert must go to the
+    // Super Admin only, never to other admins or a team leader.
+    const adminSelfTask =
+      task.createdBy?.role === 'admin' &&
+      task.assignees.some((a) => a.userId === task.createdById);
+
     // 2. Notify Team Leader (if exists and not already notified for this overdue event)
-    if (task.department.teamLeader) {
-      const tlId = task.department.teamLeader.id;
+    const teamLeader = task.department?.teamLeader;
+    if (teamLeader) {
+      const tlId = teamLeader.id;
 
       // Avoid duplicate overdue notification within last 24h for same task
       const existing = await prisma.notification.findFirst({
@@ -72,12 +80,15 @@ export async function checkOverdueTasks(): Promise<void> {
       }
     }
 
-    // Notify all admins (department-wide visibility), once per task per 24h
+    // Notify the oversight tier, once per task per 24h. For a normal task that's
+    // the admin tier; for a Sub-Admin's private self-task it's the Super Admin
+    // only (so other admins never see it).
     {
       const assigneeNames = task.assignees.map((a) => a.user.name).join(', ');
-      const existingForAdmin = await prisma.notification.findFirst({
+      const oversightRole = adminSelfTask ? 'super_admin' : 'admin';
+      const existingForOversight = await prisma.notification.findFirst({
         where: {
-          user: { role: 'admin' },
+          user: { role: oversightRole },
           type: 'task_overdue',
           referenceType: 'task',
           referenceId: task.id,
@@ -85,14 +96,30 @@ export async function checkOverdueTasks(): Promise<void> {
         },
       });
 
-      if (!existingForAdmin) {
-        await notificationsService.createForAdmins({
-          type: 'task_overdue',
+      if (!existingForOversight) {
+        const where = task.department?.name ? ` in ${task.department.name}` : '';
+        const payload = {
+          type: 'task_overdue' as const,
           title: 'Task overdue',
-          message: `"${task.title}" is overdue in ${task.department.name}. Assigned to: ${assigneeNames}`,
-          referenceType: 'task',
+          message: `"${task.title}" is overdue${where}. Assigned to: ${assigneeNames}`,
+          referenceType: 'task' as const,
           referenceId: task.id,
-        });
+        };
+        if (adminSelfTask) {
+          const supers = await prisma.user.findMany({
+            where: { organizationId: task.organizationId, role: 'super_admin', status: 'active' },
+            select: { id: true },
+          });
+          await Promise.all(
+            supers.map((s) =>
+              prisma.notification.create({
+                data: { userId: s.id, organizationId: task.organizationId, ...payload },
+              })
+            )
+          );
+        } else {
+          await notificationsService.createForAdmins(payload);
+        }
       }
     }
 

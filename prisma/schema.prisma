@@ -179,8 +179,10 @@ model Task {
   description    String?      @db.Text
   createdById    Int          @map("created_by")
   createdBy      User         @relation("TaskCreator", fields: [createdById], references: [id])
-  departmentId   Int          @map("department_id")
-  department     Department   @relation(fields: [departmentId], references: [id])
+  // Nullable: a Sub-Admin's self-assigned task belongs to no department, so it
+  // stays private to the creator + the org's Super Admin (no team leader owns it).
+  departmentId   Int?         @map("department_id")
+  department     Department?  @relation(fields: [departmentId], references: [id])
   priority       TaskPriority @default(medium)
   status         TaskStatus   @default(assigned)
   deadline       DateTime

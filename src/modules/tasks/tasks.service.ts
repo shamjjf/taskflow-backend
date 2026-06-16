@@ -1,5 +1,5 @@
 import { prisma } from '@/config/prisma';
-import { TaskStatus, TaskPriority, UserRole } from '@prisma/client';
+import { TaskStatus, TaskPriority, UserRole, NotificationType, ReferenceType } from '@prisma/client';
 import { socketEvents } from '@/sockets';
 import { notificationsService } from '@/modules/notifications/notifications.service';
 
@@ -39,42 +39,95 @@ type Requester = {
   organizationId: number;
 };
 
+// The role a self-assigning user reports UP to:
+//   employee    -> their department's team leader
+//   team_leader -> a Sub-Admin of the org
+//   admin       -> the Super Admin of the org
+function reportToRole(role: UserRole): UserRole | null {
+  if (role === 'team_leader') return 'admin';
+  if (role === 'admin') return 'super_admin';
+  return null; // employee handled via department team leader
+}
+
 // Resolve who a self-assigned task "reports to" — i.e. who should be notified
-// that they are the approver. Team leaders report to a sub-admin; employees
-// (and any other non-admin) report to their department's team leader.
+// that they are the approver.
 async function resolveReportToTargets(
   requester: { userId: number; role: UserRole; organizationId: number },
-  department: { teamLeaderId: number | null },
+  department: { teamLeaderId: number | null } | null,
   reportToId?: number
 ): Promise<number[]> {
-  if (requester.role === 'team_leader') {
-    // Honour an explicitly selected sub-admin when valid; otherwise fall back
-    // to notifying every active sub-admin in the org.
+  const targetRole = reportToRole(requester.role);
+
+  if (targetRole) {
+    // Honour an explicitly selected manager when valid; otherwise fall back to
+    // notifying every active user of the target tier in the org.
     if (reportToId) {
       const chosen = await prisma.user.findFirst({
         where: {
           id: reportToId,
           organizationId: requester.organizationId,
-          role: 'admin',
+          role: targetRole,
           status: 'active',
         },
         select: { id: true },
       });
       if (chosen) return [chosen.id];
     }
-    const admins = await prisma.user.findMany({
-      where: { organizationId: requester.organizationId, role: 'admin', status: 'active' },
+    const targets = await prisma.user.findMany({
+      where: { organizationId: requester.organizationId, role: targetRole, status: 'active' },
       select: { id: true },
     });
-    return admins.map((a) => a.id);
+    return targets.map((t) => t.id);
   }
 
-  // employee (and other non-admin roles): report to the department team leader,
-  // but never notify themselves if they happen to be the leader.
-  if (department.teamLeaderId && department.teamLeaderId !== requester.userId) {
+  // employee: report to the department team leader, but never notify themselves
+  // if they happen to be the leader.
+  if (department?.teamLeaderId && department.teamLeaderId !== requester.userId) {
     return [department.teamLeaderId];
   }
   return [];
+}
+
+// A Sub-Admin's self-assigned task is private: it has no department and must
+// stay invisible to every other admin. This is true when the creator is an
+// admin AND is among the assignees.
+function isAdminSelfTask(task: {
+  createdById: number;
+  createdBy?: { role: UserRole } | null;
+  assignees: Array<{ userId: number }>;
+}): boolean {
+  return (
+    task.createdBy?.role === 'admin' &&
+    task.assignees.some((a) => a.userId === task.createdById)
+  );
+}
+
+// Mirror task lifecycle activity to the oversight tier. Normally that's the
+// admin/super-admin tier (createForAdmins). But for a Sub-Admin's private
+// self-task it must go to the org's Super Admin ONLY — never other admins.
+async function notifyOversightTier(
+  payload: {
+    type: NotificationType;
+    title: string;
+    message: string;
+    referenceType?: ReferenceType;
+    referenceId?: number;
+  },
+  ctx: { organizationId: number; excludeUserId?: number; adminSelfTask: boolean }
+) {
+  if (ctx.adminSelfTask) {
+    const supers = await prisma.user.findMany({
+      where: { organizationId: ctx.organizationId, role: 'super_admin', status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      supers
+        .filter((s) => s.id !== ctx.excludeUserId)
+        .map((s) => notificationsService.create({ userId: s.id, ...payload }))
+    );
+    return;
+  }
+  await notificationsService.createForAdmins(payload, { excludeUserId: ctx.excludeUserId });
 }
 
 const taskInclude = {
@@ -197,12 +250,13 @@ export const tasksService = {
   },
 
   // The list of people the caller can report to when self-assigning a task:
-  // a team leader reports to the org's sub-admins; everyone else reports to
-  // their own department's team leader.
+  // a Sub-Admin reports to the org's Super Admin; a team leader reports to the
+  // org's Sub-Admins; an employee reports to their own department's team leader.
   async getReportToOptions(requester: Requester) {
-    if (requester.role === 'team_leader') {
+    const targetRole = reportToRole(requester.role);
+    if (targetRole) {
       return prisma.user.findMany({
-        where: { organizationId: requester.organizationId, role: 'admin', status: 'active' },
+        where: { organizationId: requester.organizationId, role: targetRole, status: 'active' },
         select: { id: true, name: true, role: true, designation: true },
         orderBy: { name: 'asc' },
       });
@@ -221,21 +275,31 @@ export const tasksService = {
     return [];
   },
 
-  // Self-assign: the caller creates a task assigned to themselves, inside their
-  // own department. The lifecycle afterwards is identical to any other task —
-  // start -> in_review -> the report-to person approves/rejects. The only
-  // special handling is that the creator cannot approve their own task (see
-  // completeTask / rejectTask).
+  // Self-assign: the caller creates a task assigned to themselves. The lifecycle
+  // afterwards is identical to any other task — start -> in_review -> the
+  // report-to person approves/rejects. The creator can never approve their own
+  // task (see completeTask / rejectTask).
+  //
+  // Department handling: employees & team leaders self-assign inside their own
+  // department. Sub-Admins have no department, so their self-task is created
+  // with departmentId = null — that keeps it private to the creator + the org's
+  // Super Admin (no team leader can ever see a department-less task).
   async createSelf(input: CreateSelfTaskInput, requester: Requester) {
-    if (!requester.departmentId) {
-      throw new Error('You must belong to a department to self-assign a task');
-    }
+    let departmentId: number | null = null;
+    let department: { teamLeaderId: number | null } | null = null;
 
-    const department = await prisma.department.findUnique({
-      where: { id: requester.departmentId },
-    });
-    if (!department || department.organizationId !== requester.organizationId) {
-      throw new Error('Department not found');
+    if (requester.role !== 'admin') {
+      if (!requester.departmentId) {
+        throw new Error('You must belong to a department to self-assign a task');
+      }
+      const dept = await prisma.department.findUnique({
+        where: { id: requester.departmentId },
+      });
+      if (!dept || dept.organizationId !== requester.organizationId) {
+        throw new Error('Department not found');
+      }
+      departmentId = dept.id;
+      department = { teamLeaderId: dept.teamLeaderId };
     }
 
     const task = await prisma.task.create({
@@ -243,7 +307,7 @@ export const tasksService = {
         organizationId: requester.organizationId,
         title: input.title,
         description: input.description,
-        departmentId: requester.departmentId,
+        departmentId,
         priority: input.priority,
         deadline: input.deadline,
         createdById: requester.userId,
@@ -259,11 +323,7 @@ export const tasksService = {
     });
     const creatorName = creator?.name || 'A team member';
 
-    const reportToIds = await resolveReportToTargets(
-      requester,
-      { teamLeaderId: department.teamLeaderId },
-      input.reportToId
-    );
+    const reportToIds = await resolveReportToTargets(requester, department, input.reportToId);
 
     await Promise.all(
       reportToIds.map((userId) =>
@@ -307,6 +367,7 @@ export const tasksService = {
       where: { id },
       include: {
         assignees: true,
+        createdBy: { select: { role: true } },
         department: { include: { teamLeader: true } },
       },
     });
@@ -334,9 +395,11 @@ export const tasksService = {
       include: taskInclude,
     });
 
+    const adminSelfTask = isAdminSelfTask(task);
+
     // Notify Team Leader that the task has started
     const starter = await prisma.user.findUnique({ where: { id: userId } });
-    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
+    if (task.department?.teamLeader && task.department.teamLeader.id !== userId) {
       await notificationsService.create({
         userId: task.department.teamLeader.id,
         type: 'task_started',
@@ -347,16 +410,18 @@ export const tasksService = {
       });
     }
 
-    // Mirror to admin tier (excluding the requester themselves)
-    await notificationsService.createForAdmins(
+    // Mirror to the oversight tier (excluding the requester themselves). For a
+    // Sub-Admin's private self-task this routes to the Super Admin only.
+    const startedWhere = task.department?.name ? ` in ${task.department.name}` : '';
+    await notifyOversightTier(
       {
         type: 'task_started',
         title: 'Task started',
-        message: `${starter?.name || 'A team member'} started working on "${task.title}" in ${task.department.name}`,
+        message: `${starter?.name || 'A team member'} started working on "${task.title}"${startedWhere}`,
         referenceType: 'task',
         referenceId: task.id,
       },
-      { excludeUserId: userId }
+      { organizationId, excludeUserId: userId, adminSelfTask }
     );
 
     socketEvents.taskStarted(
@@ -377,6 +442,7 @@ export const tasksService = {
       where: { id },
       include: {
         assignees: true,
+        createdBy: { select: { role: true } },
         department: { include: { teamLeader: true } },
       },
     });
@@ -388,6 +454,14 @@ export const tasksService = {
     const isAdminOrAbove = requester.role === 'admin' || requester.role === 'super_admin';
     if (!isTeamLeaderOfDept && !isAdminOrAbove) {
       throw new Error('Only the team leader of this department can approve this task');
+    }
+
+    const adminSelfTask = isAdminSelfTask(task);
+
+    // A Sub-Admin's self-task is approved by the Super Admin ONLY — never by
+    // another admin (and never by the creator).
+    if (adminSelfTask && requester.role !== 'super_admin') {
+      throw new Error('Only the Super Admin can approve this task.');
     }
 
     // Self-assigned tasks must be approved by the reporting manager, not the
@@ -415,7 +489,7 @@ export const tasksService = {
 
     // Notify Team Leader that the task is complete
     const finisher = await prisma.user.findUnique({ where: { id: requester.userId } });
-    if (task.department.teamLeader && task.department.teamLeader.id !== requester.userId) {
+    if (task.department?.teamLeader && task.department.teamLeader.id !== requester.userId) {
       await notificationsService.create({
         userId: task.department.teamLeader.id,
         type: 'task_completed',
@@ -426,16 +500,18 @@ export const tasksService = {
       });
     }
 
-    // Mirror to admin tier (excluding the approver themselves)
-    await notificationsService.createForAdmins(
+    // Mirror to the oversight tier (excluding the approver). For a Sub-Admin's
+    // private self-task this routes to the Super Admin only.
+    const completedWhere = task.department?.name ? ` in ${task.department.name}` : '';
+    await notifyOversightTier(
       {
         type: 'task_completed',
         title: 'Task completed',
-        message: `${finisher?.name || 'A team member'} completed "${task.title}" in ${task.department.name}`,
+        message: `${finisher?.name || 'A team member'} completed "${task.title}"${completedWhere}`,
         referenceType: 'task',
         referenceId: task.id,
       },
-      { excludeUserId: requester.userId }
+      { organizationId: requester.organizationId, excludeUserId: requester.userId, adminSelfTask }
     );
 
     socketEvents.taskCompleted(
@@ -457,6 +533,7 @@ export const tasksService = {
       where: { id },
       include: {
         assignees: true,
+        createdBy: { select: { role: true } },
         department: { include: { teamLeader: true } },
       },
     });
@@ -468,6 +545,13 @@ export const tasksService = {
     const isAdminOrAbove = requester.role === 'admin' || requester.role === 'super_admin';
     if (!isTeamLeaderOfDept && !isAdminOrAbove) {
       throw new Error('Only the team leader of this department can reject this task');
+    }
+
+    const adminSelfTask = isAdminSelfTask(task);
+
+    // A Sub-Admin's self-task is reviewed by the Super Admin ONLY.
+    if (adminSelfTask && requester.role !== 'super_admin') {
+      throw new Error('Only the Super Admin can review this task.');
     }
 
     // As with approval, a self-assigned task can't be reviewed by its own
@@ -513,16 +597,18 @@ export const tasksService = {
       )
     );
 
-    // Also mirror to admin tier so they see review activity in their bell.
-    await notificationsService.createForAdmins(
+    // Also mirror to the oversight tier so they see review activity. For a
+    // Sub-Admin's private self-task this routes to the Super Admin only.
+    const rejectedWhere = task.department?.name ? ` in ${task.department.name}` : '';
+    await notifyOversightTier(
       {
         type: 'task_review',
         title: 'Task sent back',
-        message: `"${task.title}" was sent back in ${task.department.name}: ${reason}`,
+        message: `"${task.title}" was sent back${rejectedWhere}: ${reason}`,
         referenceType: 'task',
         referenceId: task.id,
       },
-      { excludeUserId: requester.userId }
+      { organizationId: requester.organizationId, excludeUserId: requester.userId, adminSelfTask }
     );
 
     socketEvents.taskRejected(
@@ -540,6 +626,7 @@ export const tasksService = {
       where: { id },
       include: {
         assignees: true,
+        createdBy: { select: { role: true } },
         department: { include: { teamLeader: true } },
       },
     });
@@ -569,9 +656,11 @@ export const tasksService = {
       include: taskInclude,
     });
 
+    const adminSelfTask = isAdminSelfTask(task);
+
     // Notify Team Leader that the task is ready for review
     const submitter = await prisma.user.findUnique({ where: { id: userId } });
-    if (task.department.teamLeader && task.department.teamLeader.id !== userId) {
+    if (task.department?.teamLeader && task.department.teamLeader.id !== userId) {
       await notificationsService.create({
         userId: task.department.teamLeader.id,
         type: 'task_review',
@@ -582,16 +671,18 @@ export const tasksService = {
       });
     }
 
-    // Mirror to admin tier (excluding the submitter)
-    await notificationsService.createForAdmins(
+    // Mirror to the oversight tier (excluding the submitter). For a Sub-Admin's
+    // private self-task this routes to the Super Admin only.
+    const reviewWhere = task.department?.name ? ` in ${task.department.name}` : '';
+    await notifyOversightTier(
       {
         type: 'task_review',
         title: 'Task submitted for review',
-        message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review in ${task.department.name}`,
+        message: `${submitter?.name || 'A team member'} submitted "${task.title}" for review${reviewWhere}`,
         referenceType: 'task',
         referenceId: task.id,
       },
-      { excludeUserId: userId }
+      { organizationId, excludeUserId: userId, adminSelfTask }
     );
 
     socketEvents.taskReviewed(

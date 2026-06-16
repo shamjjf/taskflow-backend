@@ -9,7 +9,7 @@ import { TaskPriority, TaskStatus, UserRole } from '@prisma/client';
 // the team leader of its department, or admin/super_admin. Used by GET,
 // comment, and attachment endpoints to stop cross-department info leaks.
 function canAccessTask(
-  task: { departmentId: number; assignees: Array<{ userId: number }> },
+  task: { departmentId: number | null; assignees: Array<{ userId: number }> },
   user: { userId: number; role: UserRole; departmentId: number | null }
 ): boolean {
   if (user.role === 'super_admin' || user.role === 'admin') return true;
