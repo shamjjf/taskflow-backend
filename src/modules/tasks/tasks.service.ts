@@ -20,6 +20,63 @@ export interface CreateTaskInput {
   assigneeIds: number[];
 }
 
+export interface CreateSelfTaskInput {
+  title: string;
+  description?: string;
+  priority: TaskPriority;
+  deadline: Date;
+  // Informational: who the creator is reporting to. Used only to route the
+  // creation notification — approval routing is derived by role (a team
+  // leader's self-task is approved by an admin; everyone else's by their
+  // department's team leader).
+  reportToId?: number;
+}
+
+type Requester = {
+  userId: number;
+  role: UserRole;
+  departmentId: number | null;
+  organizationId: number;
+};
+
+// Resolve who a self-assigned task "reports to" — i.e. who should be notified
+// that they are the approver. Team leaders report to a sub-admin; employees
+// (and any other non-admin) report to their department's team leader.
+async function resolveReportToTargets(
+  requester: { userId: number; role: UserRole; organizationId: number },
+  department: { teamLeaderId: number | null },
+  reportToId?: number
+): Promise<number[]> {
+  if (requester.role === 'team_leader') {
+    // Honour an explicitly selected sub-admin when valid; otherwise fall back
+    // to notifying every active sub-admin in the org.
+    if (reportToId) {
+      const chosen = await prisma.user.findFirst({
+        where: {
+          id: reportToId,
+          organizationId: requester.organizationId,
+          role: 'admin',
+          status: 'active',
+        },
+        select: { id: true },
+      });
+      if (chosen) return [chosen.id];
+    }
+    const admins = await prisma.user.findMany({
+      where: { organizationId: requester.organizationId, role: 'admin', status: 'active' },
+      select: { id: true },
+    });
+    return admins.map((a) => a.id);
+  }
+
+  // employee (and other non-admin roles): report to the department team leader,
+  // but never notify themselves if they happen to be the leader.
+  if (department.teamLeaderId && department.teamLeaderId !== requester.userId) {
+    return [department.teamLeaderId];
+  }
+  return [];
+}
+
 const taskInclude = {
   createdBy: { select: { id: true, name: true } },
   department: { select: { id: true, name: true } },
@@ -139,6 +196,95 @@ export const tasksService = {
     return task;
   },
 
+  // The list of people the caller can report to when self-assigning a task:
+  // a team leader reports to the org's sub-admins; everyone else reports to
+  // their own department's team leader.
+  async getReportToOptions(requester: Requester) {
+    if (requester.role === 'team_leader') {
+      return prisma.user.findMany({
+        where: { organizationId: requester.organizationId, role: 'admin', status: 'active' },
+        select: { id: true, name: true, role: true, designation: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+
+    if (!requester.departmentId) return [];
+    const dept = await prisma.department.findFirst({
+      where: { id: requester.departmentId, organizationId: requester.organizationId },
+      include: {
+        teamLeader: { select: { id: true, name: true, role: true, designation: true } },
+      },
+    });
+    if (dept?.teamLeader && dept.teamLeader.id !== requester.userId) {
+      return [dept.teamLeader];
+    }
+    return [];
+  },
+
+  // Self-assign: the caller creates a task assigned to themselves, inside their
+  // own department. The lifecycle afterwards is identical to any other task —
+  // start -> in_review -> the report-to person approves/rejects. The only
+  // special handling is that the creator cannot approve their own task (see
+  // completeTask / rejectTask).
+  async createSelf(input: CreateSelfTaskInput, requester: Requester) {
+    if (!requester.departmentId) {
+      throw new Error('You must belong to a department to self-assign a task');
+    }
+
+    const department = await prisma.department.findUnique({
+      where: { id: requester.departmentId },
+    });
+    if (!department || department.organizationId !== requester.organizationId) {
+      throw new Error('Department not found');
+    }
+
+    const task = await prisma.task.create({
+      data: {
+        organizationId: requester.organizationId,
+        title: input.title,
+        description: input.description,
+        departmentId: requester.departmentId,
+        priority: input.priority,
+        deadline: input.deadline,
+        createdById: requester.userId,
+        assignees: { create: [{ userId: requester.userId }] },
+      },
+      include: taskInclude,
+    });
+
+    // Notify whoever this task reports to that they are the approver.
+    const creator = await prisma.user.findUnique({
+      where: { id: requester.userId },
+      select: { name: true },
+    });
+    const creatorName = creator?.name || 'A team member';
+
+    const reportToIds = await resolveReportToTargets(
+      requester,
+      { teamLeaderId: department.teamLeaderId },
+      input.reportToId
+    );
+
+    await Promise.all(
+      reportToIds.map((userId) =>
+        notificationsService.create({
+          userId,
+          type: 'task_assigned',
+          title: 'New self-assigned task',
+          message: `${creatorName} self-assigned "${task.title}" and is reporting to you. Deadline: ${task.deadline.toLocaleString()}`,
+          referenceType: 'task',
+          referenceId: task.id,
+        })
+      )
+    );
+
+    // Surface the new task to the assignee (self) + department room so the
+    // team-tasks board and approver's queue update live.
+    socketEvents.taskAssigned([requester.userId], task.departmentId, task);
+
+    return task;
+  },
+
   async update(
     id: number,
     data: {
@@ -244,6 +390,16 @@ export const tasksService = {
       throw new Error('Only the team leader of this department can approve this task');
     }
 
+    // Self-assigned tasks must be approved by the reporting manager, not the
+    // creator. A team leader is the leader of their own department, so without
+    // this guard they could approve their own self-assigned task.
+    const isAssignee = task.assignees.some((a) => a.userId === requester.userId);
+    if (isAssignee && task.createdById === requester.userId && requester.role !== 'super_admin') {
+      throw new Error(
+        "You can't approve your own self-assigned task — it must be approved by your reporting manager."
+      );
+    }
+
     if (task.status === 'completed') {
       throw new Error('Task is already completed');
     }
@@ -312,6 +468,15 @@ export const tasksService = {
     const isAdminOrAbove = requester.role === 'admin' || requester.role === 'super_admin';
     if (!isTeamLeaderOfDept && !isAdminOrAbove) {
       throw new Error('Only the team leader of this department can reject this task');
+    }
+
+    // As with approval, a self-assigned task can't be reviewed by its own
+    // creator — the reporting manager handles accept/reject.
+    const isAssignee = task.assignees.some((a) => a.userId === requester.userId);
+    if (isAssignee && task.createdById === requester.userId && requester.role !== 'super_admin') {
+      throw new Error(
+        "You can't review your own self-assigned task — it must be reviewed by your reporting manager."
+      );
     }
 
     if (task.status !== 'in_review') {

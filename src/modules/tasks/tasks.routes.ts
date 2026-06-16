@@ -8,9 +8,14 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/', tasksController.list);
+// Literal route MUST precede '/:id' so it isn't swallowed as an id param.
+router.get('/report-to-options', tasksController.reportToOptions);
 router.get('/:id', tasksController.get);
 router.get('/:id/comments', tasksController.listComments);
 
+// Self-assign is open to any authenticated user (employee or team leader);
+// the assignee + department are forced to the caller inside the service.
+router.post('/self', tasksController.createSelf);
 router.post('/', requireTLOrAbove, tasksController.create);
 router.put('/:id', requireTLOrAbove, tasksController.update);
 router.delete('/:id', requireTLOrAbove, tasksController.remove);

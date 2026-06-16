@@ -27,6 +27,16 @@ const createSchema = z.object({
   assigneeIds: z.array(z.number()).min(1),
 });
 
+// Self-assign: department + assignee are forced to the caller server-side, so
+// the body only carries the task fields and the (informational) report-to.
+const createSelfSchema = z.object({
+  title: z.string().min(2),
+  description: z.string().optional(),
+  priority: z.enum(['low', 'medium', 'high']),
+  deadline: z.string().transform((s) => new Date(s)),
+  reportToId: z.number().optional(),
+});
+
 // `status` is intentionally NOT part of the update schema: status changes
 // MUST go through the dedicated /start, /review, /complete, /reject endpoints
 // so the state machine, notifications, and sockets stay consistent.
@@ -104,6 +114,36 @@ export const tasksController = {
 
     const task = await tasksService.create(data, req.user.userId, req.user.organizationId);
     return created(res, task, 'Task created');
+  }),
+
+  // Who the caller can pick as their "report to" when self-assigning. Lives on
+  // its own endpoint because team leaders/employees can't list sub-admins via
+  // the regular /users endpoint.
+  reportToOptions: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const options = await tasksService.getReportToOptions({
+      userId: req.user.userId,
+      role: req.user.role,
+      departmentId: req.user.departmentId,
+      organizationId: req.user.organizationId,
+    });
+    return ok(res, options);
+  }),
+
+  createSelf: asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return unauthorized(res);
+    const data = createSelfSchema.parse(req.body);
+    try {
+      const task = await tasksService.createSelf(data, {
+        userId: req.user.userId,
+        role: req.user.role,
+        departmentId: req.user.departmentId,
+        organizationId: req.user.organizationId,
+      });
+      return created(res, task, 'Task created');
+    } catch (err) {
+      return badRequest(res, (err as Error).message);
+    }
   }),
 
   update: asyncHandler(async (req: Request, res: Response) => {
