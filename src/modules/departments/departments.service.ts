@@ -100,7 +100,33 @@ export const departmentsService = {
     if (data.teamLeaderId !== undefined && data.teamLeaderId !== null) {
       await assertCanBecomeTeamLeader(data.teamLeaderId);
     }
+
+    // Capture the current team leader BEFORE the update so we can demote them
+    // if the team leader has actually changed.
+    const previous = await prisma.department.findUnique({
+      where: { id },
+      select: { teamLeaderId: true },
+    });
+    const previousTeamLeaderId = previous?.teamLeaderId ?? null;
+
     const department = await prisma.department.update({ where: { id }, data });
+
+    const teamLeaderChanged =
+      data.teamLeaderId !== undefined && data.teamLeaderId !== previousTeamLeaderId;
+
+    // Demote the OLD team leader to a regular employee and unassign their
+    // department, but only if they are actually being replaced by someone
+    // else (or being cleared). Skip if no change.
+    if (teamLeaderChanged && previousTeamLeaderId) {
+      try {
+        await prisma.user.update({
+          where: { id: previousTeamLeaderId },
+          data: { role: 'employee', departmentId: null },
+        });
+      } catch (err) {
+        console.error('Error demoting previous team leader:', err);
+      }
+    }
 
     // When the team leader changes, also pin the new TL's User.departmentId
     // to this dept and bump them to role 'team_leader'. Without this, the TL
@@ -117,17 +143,25 @@ export const departmentsService = {
       }
     }
 
-    // If team leader was updated and group chat exists, update members
-    if (data.teamLeaderId !== undefined) {
+    // If team leader was updated and group chat exists, sync members:
+    // add the new leader, and remove the demoted previous leader.
+    if (teamLeaderChanged) {
       try {
         const groupChat = await chatService.getDepartmentGroupChat(id);
         if (groupChat) {
           const oldMembers = groupChat.participants.map((p) => p.userId);
           const newTeamLeaderId = data.teamLeaderId;
 
-          // Add new team leader if not already a member
           if (newTeamLeaderId && !oldMembers.includes(newTeamLeaderId)) {
             await chatService.addMemberToDepartmentGroup(groupChat.id, newTeamLeaderId);
+          }
+
+          if (
+            previousTeamLeaderId &&
+            previousTeamLeaderId !== newTeamLeaderId &&
+            oldMembers.includes(previousTeamLeaderId)
+          ) {
+            await chatService.removeMemberFromDepartmentGroup(groupChat.id, previousTeamLeaderId);
           }
         }
       } catch (err) {
